@@ -12,6 +12,8 @@ const C = {
 
 export default function App() {
   const [state, setState] = useState(INITIAL_STATE);
+  const [extractionStatus, setExtractionStatus] = useState('idle'); // 'idle'|'running'|'done'|'error'
+  const [extractionMsg,    setExtractionMsg]    = useState('');
 
   const setLayer = (layer) => {
     if (layer === 'L2' && !state.l1.complete) return;
@@ -19,14 +21,27 @@ export default function App() {
     setState(prev => ({ ...prev, activeLayer: layer }));
   };
 
-  const handleL1Complete = useCallback((charter, elements) => {
+  // Called immediately when PM clicks Extract — moves to setup right away
+  const handleL1StartExtraction = useCallback(() => {
+    setExtractionStatus('running');
+    setExtractionMsg('Extracting project elements in the background...');
     setState(prev => ({
       ...prev,
       activeLayer: 'L2',
+      l1: { ...prev.l1, complete: false },
+      l2: { ...prev.l2, currentSheet: 'setup' },
+    }));
+  }, []);
+
+  // Called when extraction finishes in the background
+  const handleL1Complete = useCallback((charter, elements) => {
+    setExtractionStatus('done');
+    setExtractionMsg('✓ Extraction complete — registers populated');
+    setState(prev => ({
+      ...prev,
       l1: { charter, elements, complete: true },
       l2: {
         ...prev.l2,
-        currentSheet: 'setup',
         sheets: {
           ...prev.l2.sheets,
           '01': { status:'ai-draft', locked:false, data:{ charter } },
@@ -37,6 +52,13 @@ export default function App() {
         },
       },
     }));
+    // Clear notification after 6 seconds
+    setTimeout(() => setExtractionMsg(''), 6000);
+  }, []);
+
+  const handleL1Error = useCallback((msg) => {
+    setExtractionStatus('error');
+    setExtractionMsg('⚠ Extraction failed: ' + msg);
   }, []);
 
   const handleSetupComplete = useCallback(({ project, loginCodes }) => {
@@ -138,10 +160,47 @@ export default function App() {
         </div>
       </div>
 
+      {/* Extraction progress bar */}
+      {extractionStatus !== 'idle' && (
+        <div style={{ flexShrink:0, position:"relative" }}>
+          {/* Track */}
+          <div style={{ height:3, background:"#1F4D34", width:"100%" }}>
+            {/* Fill */}
+            <div style={{
+              height:"100%",
+              background: extractionStatus==='done' ? "#3ae0a2" : extractionStatus==='error' ? "#e05c5c" : "#2E7D52",
+              width: extractionStatus==='running' ? "85%" : extractionStatus==='done' ? "100%" : "100%",
+              transition: extractionStatus==='running' ? "width 45s cubic-bezier(0.1,0,0.2,1)" : "width 0.4s ease",
+              opacity: extractionStatus==='done' ? 0 : 1,
+              transitionProperty: extractionStatus==='done' ? "width 0.4s ease, opacity 1s ease 0.5s" : "width",
+            }}/>
+          </div>
+          {/* Label */}
+          <div style={{
+            padding:"5px 20px",
+            background: extractionStatus==='done' ? "rgba(58,224,162,0.08)" : extractionStatus==='error' ? "rgba(224,92,92,0.08)" : "rgba(46,125,82,0.08)",
+            borderBottom:`1px solid ${extractionStatus==='done' ? "#2E7D52" : extractionStatus==='error' ? "#e05c5c" : "#1F4D34"}`,
+            fontSize:11, fontWeight:600,
+            color: extractionStatus==='done' ? "#3ae0a2" : extractionStatus==='error' ? "#e05c5c" : "#8aac96",
+            display:"flex", alignItems:"center", gap:8,
+          }}>
+            {extractionStatus==='running' && (
+              <div style={{ width:8, height:8, borderRadius:"50%", background:"#2E7D52", animation:"pulse 1.2s ease-in-out infinite" }}/>
+            )}
+            {extractionStatus==='done'    && <span>✓</span>}
+            {extractionStatus==='error'   && <span>⚠</span>}
+            {extractionMsg}
+          </div>
+        </div>
+      )}
+
       {/* Content */}
       <div style={{ flex:1, overflow:"hidden", display:"flex", flexDirection:"column" }}>
         {state.activeLayer === 'L1' && (
-          <DocumentIntelligenceLayer onSendToPersonalisation={handleL1Complete}/>
+          <DocumentIntelligenceLayer
+            onStartExtraction={handleL1StartExtraction}
+            onSendToPersonalisation={handleL1Complete}
+            onExtractionError={handleL1Error}/>
         )}
         {state.activeLayer === 'L2' && state.l2.currentSheet === 'setup' && (
           <ProjectSetup project={state.project} l1Charter={state.l1.charter} onComplete={handleSetupComplete}/>
@@ -163,6 +222,10 @@ export default function App() {
           </div>
         )}
       </div>
+      <style>{`
+        @keyframes spin { to { transform: rotate(360deg); } }
+        @keyframes pulse { 0%,100% { opacity:.3; transform:scale(0.8); } 50% { opacity:1; transform:scale(1.2); } }
+      `}</style>
     </div>
   );
 }
