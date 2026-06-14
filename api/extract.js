@@ -3,8 +3,8 @@ export default async function handler(req, res) {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' })
   }
-
   const apiKey = process.env.ANTHROPIC_API_KEY
+  console.log("Key present:", !!apiKey, "Length:", apiKey?.length)
   if (!apiKey) {
     return res.status(500).json({ error: 'ANTHROPIC_API_KEY not configured' })
   }
