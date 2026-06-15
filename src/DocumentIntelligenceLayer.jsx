@@ -211,7 +211,7 @@ function CharterPanel({ charter }){
 }
 
 // ── Main component ──────────────────────────────────────────────────────────
-export default function DocumentIntelligenceLayer({ onSendToPersonalisation }){
+export default function DocumentIntelligenceLayer({ onSendToPersonalisation, onStartExtraction, onExtractionError }){
   const [inputTab,  setInputTab]  = useState("upload");
   const [viewTab,   setViewTab]   = useState("all");
   const [file,      setFile]      = useState(null);
@@ -285,9 +285,12 @@ export default function DocumentIntelligenceLayer({ onSendToPersonalisation }){
       docText = pasteText.trim();
     }
 
-    await sleep(500); setStage("analyse"); setLoadMsg("Analysing project context...");
-    await sleep(500); setStage("classify"); setLoadMsg("Classifying project elements...");
-    await sleep(400); setStage("map"); setLoadMsg("Mapping elements with governance metadata...");
+    // Move PM to setup immediately — extraction runs in background
+    if (onStartExtraction) onStartExtraction();
+
+    await sleep(300); setStage("analyse"); setLoadMsg("Analysing project context...");
+    await sleep(300); setStage("classify"); setLoadMsg("Classifying project elements...");
+    await sleep(200); setStage("map"); setLoadMsg("Mapping elements with governance metadata...");
 
     const maxDoc = docText.length > 14000 ? docText.slice(0, 14000) + "\n[... truncated ...]" : docText;
     const hint   = docType !== "auto" ? "Document type: " + docType + ". " : "";
@@ -377,6 +380,7 @@ ID format: R-101,R-102... | I-101... | SH-001,SH-002... | D-001... | ACT-001... 
       setLoading(false);
       setStage(null);
       showToast("Error: " + err.message);
+      if (onExtractionError) onExtractionError(err.message);
     }
   };
 

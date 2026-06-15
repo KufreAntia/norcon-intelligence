@@ -36,7 +36,7 @@ const SHEET_COMPONENTS = {
   "09": Sheet09Comms,
 };
 
-export default function PersonalisationLayer({ state, onSheetUpdate, onSheetApprove, onSheetUnlock, onSheetNav }) {
+export default function PersonalisationLayer({ state, onSheetUpdate, onSheetApprove, onSheetUnlock, onSheetNav, onGoToL3 }) {
   const { l2, l1, project } = state;
   const current  = l2.currentSheet;
   const sheets   = l2.sheets;
@@ -190,7 +190,14 @@ export default function PersonalisationLayer({ state, onSheetUpdate, onSheetAppr
                 cursor: prevSheet ? "pointer" : "not-allowed", opacity: prevSheet ? 1 : 0.4 }}>
               {String.fromCharCode(8592)} {prevSheet?.label || ""}
             </button>
-            <div style={{ fontSize:11, color:C.muted }}>{currentIdx + 1} / {SHEETS.length}</div>
+            <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+              <span style={{ fontSize:11, color:C.muted }}>{currentIdx + 1} / {SHEETS.length}</span>
+              {onGoToL3 && approvedCount > 0 && (
+                <button onClick={onGoToL3} style={{ padding:"5px 12px", background:C.accent, color:"#fff", border:"none", borderRadius:5, fontSize:11, fontWeight:700, cursor:"pointer" }}>
+                  Go to Operating Layer {String.fromCharCode(8594)}
+                </button>
+              )}
+            </div>
             <button onClick={handleNext} disabled={!nextSheet}
               style={{ padding:"7px 16px", background: nextSheet ? C.accent : "none",
                 border:`1px solid ${nextSheet ? C.accent : C.border}`,
