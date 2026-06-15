@@ -38,10 +38,31 @@ export default function OperatingLayer({ state, member, onGoToL2, onMarkComplete
   const raciData     = sheets["04"]?.data               || {};
   const charter      = sheets["01"]?.data?.charter      || state.l1?.charter || {};
 
+  // Auto-build RACI from schedule if sheet 04 is empty
+  const autoRaci = (() => {
+    const r = raciData;
+    if ((r.raciRows||[]).length > 0 || (r.customRows||[]).length > 0) return r;
+    // Build from schedule
+    const members = state.l2?.loginCodes?.filter(m=>m.name&&m.role) || [];
+    const rows = [
+      ...(activities||[]).map(a=>({ taskId:a._id, label:a.name||a._id, phase:a.phase, type:"activity", suggestedResponsible:a.responsible })),
+      ...(milestones||[]).map(m=>({ taskId:m._id, label:m.name||m._id, phase:m.phase, type:"milestone", suggestedResponsible:"Project Manager" })),
+    ].map(task => {
+      const assignments = {};
+      members.forEach(m => {
+        if (m.role==="Project Manager") assignments[m.loginCode] = task.type==="milestone"?"A":"C";
+        else if (task.suggestedResponsible && (m.role===task.suggestedResponsible||m.deliveryRole===task.suggestedResponsible)) assignments[m.loginCode]="R";
+        else assignments[m.loginCode]="I";
+      });
+      return { ...task, assignments };
+    });
+    return { raciRows: rows, customRows: [] };
+  })();
+
   const sharedProps = {
     state, member, project, sheets, charter,
     activities, milestones, risks, deliverables, stakeholders,
-    teamMembers, raciData, isPM,
+    teamMembers, raciData: autoRaci, isPM,
     onMarkComplete, onGoToL2, onStateChange,
   };
 

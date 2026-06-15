@@ -102,12 +102,12 @@ export default function App() {
   }, []);
 
   // ── Layer 3 handlers ───────────────────────────────────────────────────
-  const handleMarkComplete = useCallback((taskId, itemType) => {
+  const handleMarkComplete = useCallback((taskId, itemType, complete=true) => {
     setState(prev => {
       const key    = itemType === "milestone" ? "milestones" : "activities";
       const sheet  = "03";
       const items  = prev.l2.sheets[sheet]?.data?.[key] || [];
-      const updated = items.map(a => a._id === taskId ? { ...a, _complete:true } : a);
+      const updated = items.map(a => a._id === taskId ? { ...a, _complete: complete } : a);
       return {
         ...prev,
         l2: {
