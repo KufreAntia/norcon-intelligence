@@ -1,71 +1,57 @@
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
 
-const C = {
-  bg:"#0D2B1B", surface:"#122E1E", surface2:"#183D28", border:"#1F4D34",
-  accent:"#2E7D52", accentL:"#3a9962",
-  sage:"#E5F0E8", sageDim:"#b8d4c0", dim:"#8aac96", muted:"#5a7a66",
-  risk:"#e05c5c", milestone:"#e0a23a", activity:"#3ae0a2",
-};
+const C = { surface:"#122E1E", surface2:"#183D28", border:"#1F4D34", accent:"#2E7D52", accentL:"#3a9962", sage:"#E5F0E8", sageDim:"#b8d4c0", dim:"#8aac96", muted:"#5a7a66", risk:"#e05c5c", milestone:"#e0a23a", activity:"#3ae0a2" };
+const inp = { background:C.surface2, border:`1px solid ${C.border}`, borderRadius:4, color:C.sage, fontSize:11, padding:"4px 7px", outline:"none", boxSizing:"border-box", fontFamily:"inherit", width:"100%" };
 
-const PHASE_COLORS = {
-  Concept:"#9c6ee0", Definition:"#3a9ce0", Development:"#3ae0a2",
-  "Handover & Closeout":"#e0a23a", "Benefits Realisation":"#e05c5c",
-  Planning:"#3a9ce0", Execution:"#3ae0a2", "Monitoring & Control":"#e0a23a",
-  Closure:"#8aac96", Initiation:"#9c6ee0",
-};
+const PHASE_ORDER  = ["Initiation","Planning","Execution","Monitoring & Control","Closure"];
+const PHASE_COLORS = { Initiation:"#5d8aff", Planning:"#3ae0a2", Execution:"#2E7D52", "Monitoring & Control":"#e0a23a", Closure:"#8aac96" };
 
-const PHASE_ORDER = ["Concept","Initiation","Definition","Planning","Development","Execution","Monitoring & Control","Handover & Closeout","Benefits Realisation","Closure"];
-
-function addDays(date, days) { const d = new Date(date); d.setDate(d.getDate()+days); return d; }
-function daysBetween(a, b)   { return Math.round((new Date(b)-new Date(a))/86400000); }
-function fmtDate(d)          { return new Date(d).toLocaleDateString("en-GB",{day:"numeric",month:"short"}); }
-function fmtInput(d)         { try { return new Date(d).toISOString().split("T")[0]; } catch { return ""; } }
+function daysBetween(a,b) { return Math.round((b-a)/(1000*60*60*24)); }
+function addDays(d,n) { const r=new Date(d); r.setDate(r.getDate()+n); return r; }
+function fmtDate(d) { if(!d) return ""; const dt=new Date(d); return dt.toLocaleDateString("en-GB",{day:"2-digit",month:"short"}); }
 
 function autoAssignDates(items) {
-  const phases = [...new Set(items.map(i=>i.phase||"Definition"))];
-  phases.sort((a,b)=>PHASE_ORDER.indexOf(a)-PHASE_ORDER.indexOf(b));
-  const phaseDays = Math.max(14, Math.floor(90/Math.max(phases.length,1)));
-  const projectStart = new Date();
-  return items.map(item => {
-    if (item.startDate || item.targetDate) return item;
-    const phaseIdx = Math.max(0, phases.indexOf(item.phase||"Definition"));
-    const start    = addDays(projectStart, phaseIdx * phaseDays);
-    const end      = addDays(start, item.itemType==="milestone" ? 0 : phaseDays - 2);
-    return { ...item, startDate: fmtInput(start), targetDate: fmtInput(end), _autoDate: true };
+  const sorted=[...items].sort((a,b)=>{
+    const oi=PHASE_ORDER.indexOf(a.phase),oj=PHASE_ORDER.indexOf(b.phase);
+    if(oi!==oj) return oi-oj; return 0;
+  });
+  let cursor=addDays(new Date(),1);
+  return sorted.map(item=>{
+    if(item._autoDate===false&&item.startDate) return item;
+    const start=new Date(cursor);
+    const dur=item.itemType==="milestone"?1:14;
+    const end=addDays(start,dur-1);
+    cursor=addDays(end,2);
+    return {...item, startDate:start.toISOString().split("T")[0], targetDate:end.toISOString().split("T")[0], _autoDate:true};
   });
 }
 
-// Get owner from RACI (person with R on this task)
-function getOwner(taskId, raciData, loginCodes) {
-  const rows = [...(raciData?.raciRows||[]), ...(raciData?.customRows||[])];
-  const row  = rows.find(r => r.taskId === taskId);
-  if (!row) return null;
-  const entry = Object.entries(row.assignments||{}).find(([,v])=>v==="R");
-  if (!entry) return null;
-  const member = (loginCodes||[]).find(m=>m.loginCode===entry[0]);
-  return member ? (member.name || member.role) : entry[0];
-}
+export default function L3IntegratedBaseline({ state, activities, milestones, member, raciData, onStateChange, onBaselineBlur }) {
+  const project    = state?.project;
+  const canEdit    = member?.isPM;
+  const sheets     = state?.l2?.sheets || {};
 
-// Auto-generate cost account codes
-function getCostAccount(idx, projectCode) {
-  return `${(projectCode||"NC").toUpperCase()}-${String(idx+1).padStart(2,"0")}`;
-}
-
-export default function L3IntegratedBaseline({ activities, milestones, raciData, project, loginCodes, member, onStateChange }) {
-  const projectCode = project?.code || "NC";
-  const canEdit     = member?.isPM;
-
-  // Merge activities and milestones with cost data
+  // ── Cost data — persisted in state ────────────────────────────────────
+  const savedCostData = sheets["03"]?.data?.costData || {};
   const [costData, setCostData] = useState(() => {
     const init = {};
-    activities.forEach(a => { init[a._id] = { plannedAmount:"", actualAmount:"", costAccount:"" }; });
-    milestones.forEach(m => { init[m._id] = { plannedAmount:"", actualAmount:"", costAccount:"" }; });
+    activities.forEach(a => { init[a._id] = savedCostData[a._id] || { plannedAmount:"", actualAmount:"", costAccount:"" }; });
+    milestones.forEach(m => { init[m._id] = savedCostData[m._id] || { plannedAmount:"", actualAmount:"", costAccount:"" }; });
     return init;
   });
+
+  // ── Expenditure log entries ────────────────────────────────────────────
+  const savedExpLog = sheets["03"]?.data?.expenditureLog || [];
+  const [expLog, setExpLog]       = useState(savedExpLog);
+  const [newExp, setNewExp]       = useState({ activityId:"", date:"", amount:"", description:"", invoiceRef:"" });
 
   const [editing,   setEditing]   = useState(null);
   const [editStart, setEditStart] = useState("");
   const [editEnd,   setEditEnd]   = useState("");
+  // Track unsaved field edits for leave-page detection
+  const [dirtyFields, setDirtyFields] = useState({});
+
+  const ganttScrollRef = useRef(null);
 
   const rawItems = [
     ...activities.map((a,i) => ({ ...a, itemType:"activity",  color:PHASE_COLORS[a.phase]||C.accentL, _costIdx:i })),
@@ -74,7 +60,6 @@ export default function L3IntegratedBaseline({ activities, milestones, raciData,
 
   const allItems = autoAssignDates(rawItems);
 
-  // Date range
   const allDates = allItems.flatMap(i=>[i.startDate,i.targetDate].filter(Boolean)).map(d=>new Date(d));
   const minDate  = allDates.length>0 ? new Date(Math.min(...allDates)) : new Date();
   const maxDate  = allDates.length>0 ? new Date(Math.max(...allDates)) : addDays(new Date(),90);
@@ -98,9 +83,32 @@ export default function L3IntegratedBaseline({ activities, milestones, raciData,
     return { left:left*DAY_W, width };
   };
 
+  // ── Persist cost data + exp log to state ──────────────────────────────
+  const persistCost = (newCostData, newExpLog) => {
+    onStateChange(prev => ({
+      ...prev,
+      l2: {
+        ...prev.l2,
+        sheets: {
+          ...prev.l2.sheets,
+          "03": {
+            ...prev.l2.sheets["03"],
+            data: {
+              ...prev.l2.sheets["03"]?.data,
+              costData: newCostData,
+              expenditureLog: newExpLog ?? (prev.l2.sheets["03"]?.data?.expenditureLog || []),
+            },
+          },
+        },
+      },
+    }));
+  };
+
   const saveEdit = (taskId, itemType) => {
     if(!editStart) return;
     const key = itemType==="milestone"?"milestones":"activities";
+    const oldItem = (itemType==="milestone"?milestones:activities).find(i=>i._id===taskId);
+    onBaselineBlur && onBaselineBlur(itemType, taskId, "startDate", oldItem?.startDate||"", editStart, oldItem?.name||taskId);
     onStateChange(prev=>({
       ...prev,
       l2:{
@@ -123,287 +131,320 @@ export default function L3IntegratedBaseline({ activities, milestones, raciData,
   };
 
   const updateCost = (id, field, value) => {
-    setCostData(prev => ({ ...prev, [id]: { ...(prev[id]||{}), [field]:value } }));
+    const next = { ...costData, [id]: { ...(costData[id]||{}), [field]:value } };
+    setCostData(next);
+    setDirtyFields(prev=>({...prev,[id+field]:true}));
+    persistCost(next, null);
   };
 
-  // Calculate cumulative planned and actual
-  let cumPlanned = 0, cumActual = 0;
+  const addExpEntry = () => {
+    if(!newExp.activityId||!newExp.amount) return;
+    const entry = { ...newExp, id:`EXP-${String(expLog.length+1).padStart(3,"0")}`, date: newExp.date || new Date().toISOString().split("T")[0] };
+    const next  = [...expLog, entry];
+    setExpLog(next);
+    setNewExp({ activityId:"", date:"", amount:"", description:"", invoiceRef:"" });
+    onStateChange(prev => ({
+      ...prev,
+      l2: { ...prev.l2, sheets: { ...prev.l2.sheets,
+        "03": { ...prev.l2.sheets["03"], data: { ...prev.l2.sheets["03"]?.data, expenditureLog: next } }
+      }},
+    }));
+  };
 
-  // Items with cost
+  const removeExpEntry = (idx) => {
+    const next = expLog.filter((_,i)=>i!==idx);
+    setExpLog(next);
+    onStateChange(prev => ({
+      ...prev,
+      l2: { ...prev.l2, sheets: { ...prev.l2.sheets,
+        "03": { ...prev.l2.sheets["03"], data: { ...prev.l2.sheets["03"]?.data, expenditureLog: next } }
+      }},
+    }));
+  };
+
   const costItems = allItems.filter(i => costData[i._id]?.plannedAmount || costData[i._id]?.actualAmount);
-
-  // Group by phase
   const phases = [...new Set(allItems.map(i=>i.phase||"Unassigned"))];
   phases.sort((a,b)=>PHASE_ORDER.indexOf(a)-PHASE_ORDER.indexOf(b));
 
-  const thStyle = {
-    padding:"6px 8px", fontSize:9, fontWeight:700, color:C.muted,
-    textTransform:"uppercase", letterSpacing:".4px",
-    borderBottom:`1px solid ${C.border}`, background:C.surface2,
-    whiteSpace:"nowrap",
-  };
+  const thStyle = { padding:"6px 8px", fontSize:9, fontWeight:700, color:C.muted, textTransform:"uppercase", letterSpacing:".4px", borderBottom:`1px solid ${C.border}`, background:C.surface2, whiteSpace:"nowrap" };
+
+  // Planned vs actual cumulative by activity end date
+  const costTimeline = (() => {
+    const pts = allItems
+      .filter(i => costData[i._id]?.plannedAmount)
+      .map(i => ({ date:i.targetDate||i.startDate, planned:parseFloat(costData[i._id]?.plannedAmount)||0 }))
+      .sort((a,b)=>new Date(a.date)-new Date(b.date));
+    let cum=0; return pts.map(p=>({ date:p.date, planned:(cum+=p.planned) }));
+  })();
+
+  const actualByDate = (() => {
+    const pts = expLog
+      .filter(e=>e.amount)
+      .map(e=>({ date:e.date, amt:parseFloat(e.amount)||0 }))
+      .sort((a,b)=>new Date(a.date)-new Date(b.date));
+    let cum=0; return pts.map(p=>({ date:p.date, actual:(cum+=p.amt) }));
+  })();
+
+  // Bar chart data by phase
+  const phaseSpend = phases.map(ph => {
+    const items = allItems.filter(i=>(i.phase||"Unassigned")===ph);
+    const planned = items.reduce((s,i)=>s+(parseFloat(costData[i._id]?.plannedAmount)||0),0);
+    const actual  = items.reduce((s,i)=>s+(parseFloat(costData[i._id]?.actualAmount)||0),0);
+    return { phase:ph, planned, actual };
+  }).filter(d=>d.planned>0||d.actual>0);
+
+  const maxBarVal = Math.max(...phaseSpend.map(d=>Math.max(d.planned,d.actual)),1);
+
+  // FROZEN COLUMN widths
+  const COL_NAME = 180;
+  const COL_PLAN = 80;
+  const COL_ACT  = 80;
+  const COL_TOTAL_FROZEN = COL_NAME + COL_PLAN + COL_ACT;
+  const ganttWidth = totalDays * DAY_W;
+
+  const frozenHead = { position:"sticky", left:0, zIndex:3, background:C.surface2 };
 
   return (
-    <div style={{ padding:20 }}>
-      {/* Legend */}
-      <div style={{ display:"flex", gap:16, marginBottom:12, flexWrap:"wrap", alignItems:"center" }}>
-        <div style={{ fontSize:11, color:C.muted }}>
-          {allItems.some(i=>i._autoDate) && <span style={{ color:C.milestone }}>⚠ Some dates estimated — click bar to set actual dates</span>}
-        </div>
-        <div style={{ display:"flex", alignItems:"center", gap:5, fontSize:11, color:C.muted }}>
-          <div style={{ width:16, height:2, background:C.risk }}/> Today
-        </div>
-        {canEdit && <span style={{ fontSize:11, color:C.accentL }}>Click bar to edit dates · Click cost cells to enter budget</span>}
-      </div>
+    <div style={{ display:"flex", flexDirection:"column", height:"100%", overflow:"hidden" }}>
 
-      {allItems.length === 0 && (
-        <div style={{ color:C.muted, fontSize:13, textAlign:"center", padding:40 }}>
-          No activities yet. Complete Sheet 03 in the Personalisation Layer.
-        </div>
-      )}
-
-      {allItems.length > 0 && (
-        <div style={{ border:`1px solid ${C.border}`, borderRadius:8, overflow:"hidden" }}>
-          <div style={{ overflowX:"auto" }}>
-            <div style={{ minWidth: 680 + totalDays*DAY_W }}>
-
-              {/* Column headers */}
-              <div style={{ display:"flex", background:C.surface2, borderBottom:`1px solid ${C.border}`, position:"sticky", top:0, zIndex:10 }}>
-                <div style={{ ...thStyle, width:60, flexShrink:0 }}>ID</div>
-                <div style={{ ...thStyle, width:160, flexShrink:0 }}>Activity</div>
-                <div style={{ ...thStyle, width:80, flexShrink:0 }}>Owner</div>
-                <div style={{ ...thStyle, width:90, flexShrink:0, borderLeft:`1px solid ${C.border}` }}>
-                  <div style={{ color:C.accentL }}>Planned (£)</div>
-                  <div style={{ fontSize:8, fontWeight:400 }}>Amt · Cum · Acct</div>
-                </div>
-                <div style={{ ...thStyle, width:90, flexShrink:0, borderLeft:`1px solid ${C.border}` }}>
-                  <div style={{ color:C.milestone }}>Actual (£)</div>
-                  <div style={{ fontSize:8, fontWeight:400 }}>Amt · Cum · Acct</div>
-                </div>
-                <div style={{ ...thStyle, width:50, flexShrink:0 }}>Days</div>
-                <div style={{ ...thStyle, width:60, flexShrink:0 }}>Progress</div>
-                <div style={{ flex:1, position:"relative", height:34, overflow:"hidden", background:C.surface2, borderLeft:`1px solid ${C.border}` }}>
-                  {weeks.filter((_,i)=>i%4===0).map((w,i)=>(
-                    <div key={i} style={{ position:"absolute", left:daysBetween(ganttStart,w)*DAY_W, top:2, fontSize:8, fontWeight:700, color:C.dim, whiteSpace:"nowrap", paddingLeft:4 }}>
-                      {new Date(w).toLocaleDateString("en-GB",{month:"short",year:"2-digit"})}
-                    </div>
-                  ))}
+      {/* ── Gantt Table ─────────────────────────────────────────────── */}
+      <div style={{ flex:"1 1 0", overflow:"auto", position:"relative" }} ref={ganttScrollRef}>
+        <table style={{ borderCollapse:"collapse", width:"100%", minWidth: COL_TOTAL_FROZEN + ganttWidth }}>
+          <thead>
+            <tr>
+              {/* Frozen column headers */}
+              <th style={{ ...thStyle, ...frozenHead, width:COL_NAME, minWidth:COL_NAME, left:0 }}>Activity / Milestone</th>
+              <th style={{ ...thStyle, ...frozenHead, width:COL_PLAN, minWidth:COL_PLAN, left:COL_NAME, textAlign:"right" }}>Planned £</th>
+              <th style={{ ...thStyle, ...frozenHead, width:COL_ACT,  minWidth:COL_ACT,  left:COL_NAME+COL_PLAN, textAlign:"right", borderRight:`2px solid ${C.border}` }}>Actual £</th>
+              {/* Week headers */}
+              <th colSpan={weeks.length} style={{ ...thStyle, background:C.surface2, textAlign:"left", position:"sticky", top:0, zIndex:2 }}>
+                <div style={{ display:"flex", position:"relative", height:20 }}>
                   {weeks.map((w,i)=>(
-                    <div key={i} style={{ position:"absolute", left:daysBetween(ganttStart,w)*DAY_W, top:16, fontSize:7, color:C.muted, whiteSpace:"nowrap", paddingLeft:2 }}>
-                      {new Date(w).toLocaleDateString("en-GB",{day:"numeric",month:"short"})}
+                    <div key={i} style={{ minWidth:7*DAY_W, fontSize:9, color:C.muted, paddingLeft:2, borderLeft:`1px solid ${C.border}` }}>
+                      {w.toLocaleDateString("en-GB",{day:"2-digit",month:"short"})}
                     </div>
                   ))}
-                  {todayOff>=0&&todayOff<=totalDays&&(
-                    <div style={{ position:"absolute", left:todayOff*DAY_W, top:0, width:2, height:"100%", background:C.risk, opacity:.8 }}/>
-                  )}
+                  {/* Today line header marker */}
+                  <div style={{ position:"absolute", left: todayOff*DAY_W, top:0, bottom:0, width:2, background:C.accentL, opacity:.5 }}/>
                 </div>
-              </div>
-
-              {/* Phase groups */}
-              {phases.map(phase => {
-                const items = allItems.filter(i=>(i.phase||"Unassigned")===phase);
-                const col   = PHASE_COLORS[phase]||C.muted;
-
-                return (
-                  <div key={phase}>
-                    {/* Phase header */}
-                    <div style={{ display:"flex", background:"rgba(0,0,0,0.12)", borderBottom:`1px solid ${C.border}` }}>
-                      <div style={{ width:590, flexShrink:0, padding:"3px 8px", display:"flex", alignItems:"center", gap:6 }}>
-                        <div style={{ width:3, height:10, background:col, borderRadius:1 }}/>
-                        <span style={{ fontSize:9, fontWeight:700, color:col, textTransform:"uppercase", letterSpacing:".4px" }}>{phase}</span>
-                      </div>
-                      <div style={{ flex:1, height:20 }}/>
-                    </div>
-
-                    {/* Activity rows */}
-                    {items.map((item, idx) => {
-                      const bar     = getBar(item);
-                      const isMil   = item.itemType==="milestone";
-                      const isEdit  = editing===item._id;
-                      const owner   = getOwner(item._id, raciData, loginCodes);
-                      const days    = item.startDate && item.targetDate ? daysBetween(new Date(item.startDate), new Date(item.targetDate)) : "—";
-                      const progress = item._complete ? 100 : 0;
-                      const cd       = costData[item._id] || {};
-
-                      // Running cumulative
-                      const pa = parseFloat(cd.plannedAmount)||0;
-                      const aa = parseFloat(cd.actualAmount)||0;
-                      cumPlanned += pa;
-                      cumActual  += aa;
-                      const thisCumP = cumPlanned;
-                      const thisCumA = cumActual;
-
-                      const tdBase = { padding:"5px 8px", fontSize:10, color:C.sage, borderBottom:`1px solid ${C.border}`, background: idx%2===0?C.surface:"transparent", flexShrink:0 };
-
-                      return (
-                        <div key={item._id||idx}>
-                          <div style={{ display:"flex", alignItems:"center" }}>
-                            {/* ID */}
-                            <div style={{ ...tdBase, width:60, fontFamily:"monospace", fontSize:9, color:isMil?C.milestone:C.muted }}>
-                              {item._id}
-                            </div>
-                            {/* Name */}
-                            <div style={{ ...tdBase, width:160 }}>
-                              <div style={{ overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", color:item._complete?C.muted:C.sage, textDecoration:item._complete?"line-through":"none", fontSize:11 }}>
-                                {isMil?"🏁 ":""}{item.name||item.description||"—"}
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {phases.map(phase => {
+              const phaseItems = allItems.filter(i=>(i.phase||"Unassigned")===phase);
+              if(!phaseItems.length) return null;
+              return [
+                <tr key={`ph-${phase}`}>
+                  <td colSpan={3} style={{ padding:"5px 8px", fontSize:9, fontWeight:700, color:C.muted, textTransform:"uppercase", letterSpacing:".5px", background:C.surface, position:"sticky", left:0, zIndex:2 }}>{phase}</td>
+                  <td style={{ background:C.surface }}/>
+                </tr>,
+                ...phaseItems.map((item,idx) => {
+                  const bar = getBar(item);
+                  const cd  = costData[item._id] || {};
+                  const isEditing = editing === item._id;
+                  const isMilestone = item.itemType === "milestone";
+                  const plannedDays = item.startDate && item.targetDate ? daysBetween(new Date(item.startDate), new Date(item.targetDate)) : null;
+                  const actualDays  = item._actualStart && item.targetDate ? daysBetween(new Date(item._actualStart), new Date(item.targetDate)) : null;
+                  return (
+                    <tr key={item._id} style={{ background:idx%2===0?C.surface:"transparent", borderBottom:`1px solid ${C.border}22` }}>
+                      {/* Frozen: Name */}
+                      <td style={{ padding:"6px 8px", fontSize:11, color:isMilestone?C.milestone:C.sage, position:"sticky", left:0, zIndex:2, background:idx%2===0?C.surface:C.surface2, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis", maxWidth:COL_NAME }}>
+                        {isMilestone?"◆ ":""}{item.name||item.description||"—"}
+                        {plannedDays!==null&&<span style={{ fontSize:9, color:C.muted, marginLeft:6 }}>{plannedDays}d plan</span>}
+                      </td>
+                      {/* Frozen: Planned Cost */}
+                      <td style={{ padding:"4px 6px", position:"sticky", left:COL_NAME, zIndex:2, background:idx%2===0?C.surface:C.surface2, textAlign:"right", width:COL_PLAN }}>
+                        {canEdit ? (
+                          <input style={{ ...inp, width:"100%", textAlign:"right" }}
+                            value={cd.plannedAmount||""} onChange={e=>updateCost(item._id,"plannedAmount",e.target.value)}
+                            placeholder="0"/>
+                        ) : <span style={{ fontSize:11, color:C.dim }}>{cd.plannedAmount ? `£${cd.plannedAmount}` : "—"}</span>}
+                      </td>
+                      {/* Frozen: Actual Cost */}
+                      <td style={{ padding:"4px 6px", position:"sticky", left:COL_NAME+COL_PLAN, zIndex:2, background:idx%2===0?C.surface:C.surface2, textAlign:"right", width:COL_ACT, borderRight:`2px solid ${C.border}` }}>
+                        {canEdit ? (
+                          <input style={{ ...inp, width:"100%", textAlign:"right" }}
+                            value={cd.actualAmount||""} onChange={e=>updateCost(item._id,"actualAmount",e.target.value)}
+                            placeholder="0"/>
+                        ) : <span style={{ fontSize:11, color:C.dim }}>{cd.actualAmount ? `£${cd.actualAmount}` : "—"}</span>}
+                      </td>
+                      {/* Scrolling: Gantt bars */}
+                      <td style={{ padding:0, position:"relative", height:32 }}>
+                        <div style={{ position:"relative", width: ganttWidth, height:"100%" }}>
+                          {/* Today line */}
+                          <div style={{ position:"absolute", left:todayOff*DAY_W, top:0, bottom:0, width:1, background:C.accentL, opacity:.3 }}/>
+                          {bar && (
+                            isMilestone ? (
+                              <div style={{ position:"absolute", left:bar.left, top:"50%", transform:"translateY(-50%) rotate(45deg)", width:10, height:10, background:item.color, borderRadius:2, cursor:canEdit?"pointer":"default" }}
+                                onClick={()=>canEdit&&(setEditing(item._id),setEditStart(item.startDate||""),setEditEnd(item.targetDate||""))}/>
+                            ) : (
+                              <div style={{ position:"absolute", left:bar.left, top:"50%", transform:"translateY(-50%)", height:14, width:bar.width, background:item.color+"cc", borderRadius:3, cursor:canEdit?"pointer":"default", display:"flex", alignItems:"center", paddingLeft:4 }}
+                                onClick={()=>canEdit&&(setEditing(item._id),setEditStart(item.startDate||""),setEditEnd(item.targetDate||""))}>
+                                {isEditing && (
+                                  <div style={{ position:"absolute", top:18, left:0, zIndex:20, background:C.surface, border:`1px solid ${C.border}`, borderRadius:6, padding:8, display:"flex", gap:6, alignItems:"center", whiteSpace:"nowrap", boxShadow:"0 4px 12px #0006" }}
+                                    onClick={e=>e.stopPropagation()}>
+                                    <input type="date" value={editStart} onChange={e=>setEditStart(e.target.value)} style={{...inp,width:130}}/>
+                                    <span style={{color:C.muted,fontSize:11}}>→</span>
+                                    <input type="date" value={editEnd} onChange={e=>setEditEnd(e.target.value)} style={{...inp,width:130}}/>
+                                    <button onClick={()=>saveEdit(item._id,item.itemType)} style={{padding:"4px 10px",background:C.accent,border:"none",borderRadius:4,color:"#fff",fontSize:11,cursor:"pointer"}}>Save</button>
+                                    <button onClick={()=>setEditing(null)} style={{padding:"4px 8px",background:"none",border:`1px solid ${C.border}`,borderRadius:4,color:C.muted,fontSize:11,cursor:"pointer"}}>✕</button>
+                                  </div>
+                                )}
                               </div>
-                              {item._autoDate && <div style={{ fontSize:8, color:C.milestone }}>est. dates</div>}
-                            </div>
-                            {/* Owner */}
-                            <div style={{ ...tdBase, width:80, fontSize:10, color:owner?C.accentL:C.muted }}>
-                              {owner||"—"}
-                            </div>
-                            {/* Planned cost */}
-                            <div style={{ ...tdBase, width:90, borderLeft:`1px solid ${C.border}` }}>
-                              {canEdit ? (
-                                <div style={{ display:"flex", flexDirection:"column", gap:2 }}>
-                                  <input value={cd.plannedAmount||""} onChange={e=>updateCost(item._id,"plannedAmount",e.target.value)}
-                                    placeholder="0" style={{ width:"100%", background:"transparent", border:"none", color:C.accentL, fontSize:10, outline:"none", fontFamily:"inherit" }}/>
-                                  <div style={{ fontSize:9, color:C.muted }}>{pa>0?`Cum: £${thisCumP.toFixed(0)}`:"—"}</div>
-                                  <input value={cd.costAccount||""} onChange={e=>updateCost(item._id,"costAccount",e.target.value)}
-                                    placeholder={pa>0?getCostAccount(item._costIdx,projectCode):""}
-                                    style={{ width:"100%", background:"transparent", border:"none", color:C.muted, fontSize:9, outline:"none", fontFamily:"monospace" }}/>
-                                </div>
-                              ) : (
-                                <div>
-                                  <div style={{ color:C.accentL }}>{pa>0?`£${pa}`:"—"}</div>
-                                  <div style={{ fontSize:9, color:C.muted }}>{cd.costAccount||""}</div>
-                                </div>
-                              )}
-                            </div>
-                            {/* Actual cost */}
-                            <div style={{ ...tdBase, width:90, borderLeft:`1px solid ${C.border}` }}>
-                              {canEdit ? (
-                                <div style={{ display:"flex", flexDirection:"column", gap:2 }}>
-                                  <input value={cd.actualAmount||""} onChange={e=>updateCost(item._id,"actualAmount",e.target.value)}
-                                    placeholder="0" style={{ width:"100%", background:"transparent", border:"none", color:aa>pa&&pa>0?C.risk:C.milestone, fontSize:10, outline:"none", fontFamily:"inherit" }}/>
-                                  <div style={{ fontSize:9, color:C.muted }}>{aa>0?`Cum: £${thisCumA.toFixed(0)}`:"—"}</div>
-                                </div>
-                              ) : (
-                                <div style={{ color:aa>pa&&pa>0?C.risk:C.milestone }}>{aa>0?`£${aa}`:"—"}</div>
-                              )}
-                            </div>
-                            {/* Days */}
-                            <div style={{ ...tdBase, width:50, textAlign:"center" }}>{days}</div>
-                            {/* Progress */}
-                            <div style={{ ...tdBase, width:60, textAlign:"center" }}>
-                              <div style={{ fontSize:11, fontWeight:700, color:progress===100?C.activity:C.muted }}>
-                                {progress}%
-                              </div>
-                              <div style={{ height:3, background:C.surface2, borderRadius:2, marginTop:2 }}>
-                                <div style={{ width:`${progress}%`, height:"100%", background:C.activity, borderRadius:2 }}/>
-                              </div>
-                            </div>
-                            {/* Gantt track */}
-                            <div style={{ flex:1, position:"relative", height:36, overflow:"hidden", borderLeft:`1px solid ${C.border}`, background: idx%2===0?C.surface:"transparent", borderBottom:`1px solid ${C.border}` }}>
-                              {weeks.map((w,i)=>(
-                                <div key={i} style={{ position:"absolute", left:daysBetween(ganttStart,w)*DAY_W, top:0, width:1, height:"100%", background:C.border, opacity:.25 }}/>
-                              ))}
-                              {todayOff>=0&&todayOff<=totalDays&&(
-                                <div style={{ position:"absolute", left:todayOff*DAY_W, top:0, width:2, height:"100%", background:C.risk, opacity:.5, zIndex:2 }}/>
-                              )}
-                              {bar && (
-                                <div
-                                  onClick={()=>{ if(!canEdit)return; setEditing(item._id); setEditStart(item.startDate||fmtInput(new Date())); setEditEnd(item.targetDate||fmtInput(addDays(new Date(),7))); }}
-                                  title={`${fmtDate(item.startDate||new Date())} → ${fmtDate(item.targetDate||new Date())}${canEdit?" · Click to edit":""}`}
-                                  style={{ position:"absolute", left:bar.left, width:bar.width, top:isMil?14:7, height:isMil?8:20, borderRadius:isMil?1:4,
-                                    background:item._complete?C.activity+"99":col+"bb", border:`1px solid ${item._complete?C.activity:col}`,
-                                    cursor:canEdit?"pointer":"default", display:"flex", alignItems:"center", paddingLeft:4,
-                                    fontSize:8, color:"#fff", fontWeight:600, overflow:"hidden", whiteSpace:"nowrap", zIndex:3 }}>
-                                  {!isMil&&bar.width>50&&(item.name||"").slice(0,14)}
-                                </div>
-                              )}
-                              {!bar && canEdit && (
-                                <div style={{ position:"absolute", left:8, top:10, fontSize:9, color:C.muted, fontStyle:"italic", cursor:"pointer" }}
-                                  onClick={()=>{ setEditing(item._id); setEditStart(fmtInput(new Date())); setEditEnd(fmtInput(addDays(new Date(),14))); }}>
-                                  + Set dates
-                                </div>
-                              )}
-                            </div>
-                          </div>
-
-                          {/* Inline date editor */}
-                          {isEdit && (
-                            <div style={{ display:"flex", alignItems:"center", gap:10, padding:"8px 8px 8px 68px", background:"rgba(46,125,82,0.1)", borderBottom:`1px solid ${C.border}`, flexWrap:"wrap" }}>
-                              <span style={{ fontSize:11, color:C.dim, fontWeight:600 }}>Edit: {item.name||item._id}</span>
-                              <div>
-                                <div style={{ fontSize:8, color:C.muted, marginBottom:2 }}>Start</div>
-                                <input type="date" value={editStart} onChange={e=>setEditStart(e.target.value)}
-                                  style={{ background:C.surface2, border:`1px solid ${C.border}`, borderRadius:4, color:C.sage, fontSize:10, padding:"3px 6px", outline:"none" }}/>
-                              </div>
-                              <div>
-                                <div style={{ fontSize:8, color:C.muted, marginBottom:2 }}>End / Target</div>
-                                <input type="date" value={editEnd} onChange={e=>setEditEnd(e.target.value)}
-                                  style={{ background:C.surface2, border:`1px solid ${C.border}`, borderRadius:4, color:C.sage, fontSize:10, padding:"3px 6px", outline:"none" }}/>
-                              </div>
-                              <button onClick={()=>saveEdit(item._id,item.itemType)}
-                                style={{ padding:"4px 12px", background:C.accent, border:"none", borderRadius:4, color:"#fff", fontSize:10, fontWeight:700, cursor:"pointer", marginTop:10 }}>
-                                Save
-                              </button>
-                              <button onClick={()=>setEditing(null)}
-                                style={{ padding:"4px 10px", background:"none", border:`1px solid ${C.border}`, borderRadius:4, color:C.muted, fontSize:10, cursor:"pointer", marginTop:10 }}>
-                                Cancel
-                              </button>
-                            </div>
+                            )
                           )}
                         </div>
-                      );
-                    })}
-                  </div>
-                );
-              })}
-
-              {/* Cost summary row */}
-              {Object.values(costData).some(c=>c.plannedAmount||c.actualAmount) && (
-                <div style={{ display:"flex", background:C.surface2, borderTop:`2px solid ${C.border}` }}>
-                  <div style={{ width:220, flexShrink:0, padding:"8px", fontSize:11, fontWeight:700, color:C.sage }}>TOTAL</div>
-                  <div style={{ width:80, flexShrink:0 }}/>
-                  <div style={{ width:90, flexShrink:0, padding:"8px", borderLeft:`1px solid ${C.border}` }}>
-                    <div style={{ fontSize:11, fontWeight:700, color:C.accentL }}>£{cumPlanned.toFixed(0)}</div>
-                    <div style={{ fontSize:9, color:C.muted }}>Planned</div>
-                  </div>
-                  <div style={{ width:90, flexShrink:0, padding:"8px", borderLeft:`1px solid ${C.border}` }}>
-                    <div style={{ fontSize:11, fontWeight:700, color:cumActual>cumPlanned?C.risk:C.milestone }}>£{cumActual.toFixed(0)}</div>
-                    <div style={{ fontSize:9, color:C.muted }}>Actual {cumPlanned>0?`(${Math.round(cumActual/cumPlanned*100)}%)`:"—"}</div>
-                  </div>
-                  <div style={{ flex:1 }}/>
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Cost breakdown table */}
-      {costItems.length > 0 && (
-        <div style={{ marginTop:20 }}>
-          <div style={{ fontSize:11, fontWeight:700, color:C.muted, textTransform:"uppercase", letterSpacing:".5px", marginBottom:10 }}>
-            Cost Breakdown
-          </div>
-          <div style={{ border:`1px solid ${C.border}`, borderRadius:7, overflow:"hidden" }}>
-            <div style={{ display:"grid", gridTemplateColumns:"80px 1fr 100px 80px 100px", background:C.surface2, borderBottom:`1px solid ${C.border}` }}>
-              {["ID","Activity","Cost Account","Planned (£)","Actual (£)"].map(h=>(
-                <div key={h} style={{ padding:"6px 10px", fontSize:9, fontWeight:700, color:C.muted, textTransform:"uppercase", letterSpacing:".4px" }}>{h}</div>
-              ))}
-            </div>
-            {costItems.map((item,i)=>{
-              const cd = costData[item._id]||{};
-              const acct = cd.costAccount || getCostAccount(item._costIdx, projectCode);
-              return (
-                <div key={item._id} style={{ display:"grid", gridTemplateColumns:"80px 1fr 100px 80px 100px", borderBottom:`1px solid ${C.border}`, background:i%2===0?C.surface:"transparent" }}>
-                  <div style={{ padding:"6px 10px", fontFamily:"monospace", fontSize:10, color:C.muted }}>{item._id}</div>
-                  <div style={{ padding:"6px 10px", fontSize:11, color:C.sage }}>{item.name||"—"}</div>
-                  <div style={{ padding:"6px 10px", fontFamily:"monospace", fontSize:10, color:C.accentL }}>{acct}</div>
-                  <div style={{ padding:"6px 10px", fontSize:11, color:C.accentL }}>{cd.plannedAmount?`£${cd.plannedAmount}`:"—"}</div>
-                  <div style={{ padding:"6px 10px", fontSize:11, color:parseFloat(cd.actualAmount||0)>parseFloat(cd.plannedAmount||0)&&cd.plannedAmount?C.risk:C.milestone }}>
-                    {cd.actualAmount?`£${cd.actualAmount}`:"—"}
-                  </div>
-                </div>
-              );
+                      </td>
+                    </tr>
+                  );
+                })
+              ];
             })}
-          </div>
+          </tbody>
+        </table>
+      </div>
+
+      {/* ── Cost Section ─────────────────────────────────────────────── */}
+      <div style={{ borderTop:`2px solid ${C.border}`, padding:"16px 16px 0", background:C.surface }}>
+        <div style={{ fontSize:11, fontWeight:700, color:C.muted, textTransform:"uppercase", letterSpacing:".5px", marginBottom:12 }}>Cost Overview</div>
+
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:16, marginBottom:16 }}>
+          {/* Cumulative planned vs actual line chart (SVG) */}
+          {costTimeline.length > 0 && (
+            <div style={{ background:C.surface2, border:`1px solid ${C.border}`, borderRadius:8, padding:"12px 14px" }}>
+              <div style={{ fontSize:10, fontWeight:700, color:C.muted, marginBottom:8 }}>CUMULATIVE COST — PLANNED VS ACTUAL</div>
+              <svg width="100%" height="120" viewBox="0 0 300 120">
+                {(() => {
+                  const allPts = [...costTimeline, ...actualByDate];
+                  if(!allPts.length) return null;
+                  const dates = allPts.map(p=>new Date(p.date)).sort((a,b)=>a-b);
+                  const minD  = dates[0], maxD = dates[dates.length-1];
+                  const maxV  = Math.max(...costTimeline.map(p=>p.planned), ...actualByDate.map(p=>p.actual), 1);
+                  const xOf = d => 20 + ((new Date(d)-minD)/(maxD-minD+1))*260;
+                  const yOf = v => 110 - (v/maxV)*100;
+                  const planLine = costTimeline.map((p,i)=>`${i===0?"M":"L"}${xOf(p.date).toFixed(1)},${yOf(p.planned).toFixed(1)}`).join(" ");
+                  const actLine  = actualByDate.map((p,i)=>`${i===0?"M":"L"}${xOf(p.date).toFixed(1)},${yOf(p.actual).toFixed(1)}`).join(" ");
+                  return (<>
+                    <path d={planLine} stroke={C.accentL}  fill="none" strokeWidth="2" strokeDasharray="4 2"/>
+                    <path d={actLine}  stroke={C.milestone} fill="none" strokeWidth="2"/>
+                    <line x1="20" y1="110" x2="280" y2="110" stroke={C.border} strokeWidth="1"/>
+                    <line x1="20" y1="10"  x2="20"  y2="110" stroke={C.border} strokeWidth="1"/>
+                    <text x="25" y="10" fill={C.muted} fontSize="8">£{maxV.toLocaleString()}</text>
+                    <text x="240" y="108" fill={C.accentL} fontSize="8">Planned</text>
+                    <text x="240" y="100" fill={C.milestone} fontSize="8">Actual</text>
+                  </>);
+                })()}
+              </svg>
+            </div>
+          )}
+
+          {/* Phase bar chart */}
+          {phaseSpend.length > 0 && (
+            <div style={{ background:C.surface2, border:`1px solid ${C.border}`, borderRadius:8, padding:"12px 14px" }}>
+              <div style={{ fontSize:10, fontWeight:700, color:C.muted, marginBottom:8 }}>SPEND BY PHASE — PLANNED VS ACTUAL</div>
+              <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+                {phaseSpend.map(({ phase, planned, actual },i) => (
+                  <div key={i}>
+                    <div style={{ fontSize:10, color:C.dim, marginBottom:3 }}>{phase}</div>
+                    <div style={{ display:"flex", gap:4, alignItems:"center" }}>
+                      <div style={{ flex:1, height:10, background:C.border, borderRadius:2, overflow:"hidden" }}>
+                        <div style={{ width:`${(planned/maxBarVal)*100}%`, height:"100%", background:C.accentL, borderRadius:2 }}/>
+                      </div>
+                      <span style={{ fontSize:9, color:C.accentL, minWidth:50, textAlign:"right" }}>£{planned.toLocaleString()}</span>
+                    </div>
+                    <div style={{ display:"flex", gap:4, alignItems:"center", marginTop:2 }}>
+                      <div style={{ flex:1, height:10, background:C.border, borderRadius:2, overflow:"hidden" }}>
+                        <div style={{ width:`${(actual/maxBarVal)*100}%`, height:"100%", background:C.milestone, borderRadius:2 }}/>
+                      </div>
+                      <span style={{ fontSize:9, color:C.milestone, minWidth:50, textAlign:"right" }}>£{actual.toLocaleString()}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <div style={{ display:"flex", gap:12, marginTop:8 }}>
+                <div style={{ fontSize:9, color:C.accentL }}>▬ Planned</div>
+                <div style={{ fontSize:9, color:C.milestone }}>▬ Actual</div>
+              </div>
+            </div>
+          )}
         </div>
-      )}
+
+        {/* ── Expenditure Log ─────────────────────────────────────────── */}
+        <div style={{ borderTop:`1px solid ${C.border}`, paddingTop:14, marginBottom:16 }}>
+          <div style={{ fontSize:11, fontWeight:700, color:C.muted, textTransform:"uppercase", letterSpacing:".5px", marginBottom:10 }}>Expenditure Log</div>
+
+          {/* Add new entry */}
+          {canEdit && (
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 110px 90px 1fr 100px auto", gap:6, marginBottom:10, alignItems:"end" }}>
+              <div>
+                <div style={{ fontSize:9, color:C.muted, marginBottom:3 }}>ACTIVITY</div>
+                <select style={inp} value={newExp.activityId} onChange={e=>setNewExp(p=>({...p,activityId:e.target.value}))}>
+                  <option value="">Select activity…</option>
+                  {allItems.map(i=><option key={i._id} value={i._id}>{i.name||i.description}</option>)}
+                </select>
+              </div>
+              <div>
+                <div style={{ fontSize:9, color:C.muted, marginBottom:3 }}>DATE</div>
+                <input type="date" style={inp} value={newExp.date} onChange={e=>setNewExp(p=>({...p,date:e.target.value}))}/>
+              </div>
+              <div>
+                <div style={{ fontSize:9, color:C.muted, marginBottom:3 }}>AMOUNT £</div>
+                <input style={inp} value={newExp.amount} onChange={e=>setNewExp(p=>({...p,amount:e.target.value}))} placeholder="0.00"/>
+              </div>
+              <div>
+                <div style={{ fontSize:9, color:C.muted, marginBottom:3 }}>DESCRIPTION</div>
+                <input style={inp} value={newExp.description} onChange={e=>setNewExp(p=>({...p,description:e.target.value}))} placeholder="e.g. Subcontractor invoice"/>
+              </div>
+              <div>
+                <div style={{ fontSize:9, color:C.muted, marginBottom:3 }}>REF / INVOICE</div>
+                <input style={inp} value={newExp.invoiceRef} onChange={e=>setNewExp(p=>({...p,invoiceRef:e.target.value}))} placeholder="INV-001"/>
+              </div>
+              <button onClick={addExpEntry} style={{ padding:"5px 12px", background:C.accent, border:"none", borderRadius:5, color:"#fff", fontSize:11, cursor:"pointer", alignSelf:"end" }}>+ Log</button>
+            </div>
+          )}
+
+          {expLog.length === 0 && <div style={{ fontSize:11, color:C.muted, fontStyle:"italic" }}>No expenditure entries logged yet.</div>}
+
+          {expLog.length > 0 && (
+            <div style={{ overflowX:"auto" }}>
+              <table style={{ borderCollapse:"collapse", width:"100%", fontSize:11 }}>
+                <thead>
+                  <tr>
+                    {["ID","Activity","Date","Amount £","Description","Ref"].map(h=>(
+                      <th key={h} style={{ padding:"5px 8px", fontSize:9, fontWeight:700, color:C.muted, textTransform:"uppercase", textAlign:"left", borderBottom:`1px solid ${C.border}` }}>{h}</th>
+                    ))}
+                    {canEdit && <th style={{ borderBottom:`1px solid ${C.border}` }}/>}
+                  </tr>
+                </thead>
+                <tbody>
+                  {expLog.map((e,i)=>{
+                    const act = allItems.find(a=>a._id===e.activityId);
+                    return (
+                      <tr key={i} style={{ borderBottom:`1px solid ${C.border}22` }}>
+                        <td style={{ padding:"5px 8px", fontFamily:"monospace", fontSize:10, color:C.muted }}>{e.id}</td>
+                        <td style={{ padding:"5px 8px", color:C.dim }}>{act?.name||act?.description||e.activityId}</td>
+                        <td style={{ padding:"5px 8px", color:C.muted }}>{e.date}</td>
+                        <td style={{ padding:"5px 8px", color:C.accentL, fontWeight:700 }}>£{parseFloat(e.amount||0).toLocaleString()}</td>
+                        <td style={{ padding:"5px 8px", color:C.dim }}>{e.description}</td>
+                        <td style={{ padding:"5px 8px", fontFamily:"monospace", fontSize:10, color:C.muted }}>{e.invoiceRef}</td>
+                        {canEdit && <td style={{ padding:"5px 8px" }}><button onClick={()=>removeExpEntry(i)} style={{ background:"none", border:"none", color:C.muted, cursor:"pointer", fontSize:11 }}>✕</button></td>}
+                      </tr>
+                    );
+                  })}
+                </tbody>
+                <tfoot>
+                  <tr>
+                    <td colSpan={3} style={{ padding:"6px 8px", fontSize:10, fontWeight:700, color:C.muted }}>TOTAL</td>
+                    <td style={{ padding:"6px 8px", fontSize:12, fontWeight:700, color:C.accentL }}>£{expLog.reduce((s,e)=>s+(parseFloat(e.amount)||0),0).toLocaleString()}</td>
+                    <td colSpan={canEdit?3:2}/>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   );
 }

@@ -49,7 +49,23 @@ export default function Sheet05Risks({ data, locked, loginCodes, onUpdate }) {
     onUpdate({ risks:next }, 'in-progress');
   };
 
-  const teamRoles = loginCodes.map(lc=>lc.role).filter(Boolean);
+  const PM_ROLES = [
+    "Project Manager","Project Sponsor","Project Director","Programme Manager",
+    "Portfolio Manager","Risk Manager","Change Manager","Quality Manager",
+    "Project Support","PMO Analyst",
+  ];
+  const DELIVERY_ROLES = [
+    "Lead Engineer","Site Manager","Quantity Surveyor","Design Manager",
+    "Commercial Manager","Health & Safety Manager","Environmental Manager",
+    "Procurement Manager","Logistics Coordinator","Contracts Manager",
+  ];
+  const teamRoles = [
+    ...new Set([
+      ...loginCodes.map(lc=>lc.role).filter(Boolean),
+      ...PM_ROLES,
+      ...DELIVERY_ROLES,
+    ])
+  ];
 
   return (
     <div style={{maxWidth:900}}>

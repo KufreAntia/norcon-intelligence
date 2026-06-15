@@ -8,7 +8,6 @@ import Sheet05Risks from "./sheets/Sheet05Risks.jsx";
 import Sheet06Change from "./sheets/Sheet06Change.jsx";
 import Sheet07KDTracker from "./sheets/Sheet07KDTracker.jsx";
 import Sheet08Stakeholders from "./sheets/Sheet08Stakeholders.jsx";
-import Sheet09Comms from "./sheets/Sheet09Comms.jsx";
 import Sheet10Sustainability from "./sheets/Sheet10Sustainability.jsx";
 
 const C = {
@@ -34,7 +33,6 @@ const SHEET_COMPONENTS = {
   "06": Sheet06Change,
   "07": Sheet07KDTracker,
   "08": Sheet08Stakeholders,
-  "09": Sheet09Comms,
   "10": Sheet10Sustainability,
 };
 

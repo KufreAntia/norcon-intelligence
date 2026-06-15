@@ -58,8 +58,7 @@ export const SHEETS = [
   { id: '05', label: 'Risks',          icon: 'ti-alert-triangle',   enforced: false },
   { id: '06', label: 'Change Control', icon: 'ti-git-branch',       enforced: false },
   { id: '07', label: 'KD Tracker',     icon: 'ti-target',           enforced: false },
-  { id: '08', label: 'Stakeholders',   icon: 'ti-building',         enforced: false },
-  { id: '09', label: 'Comms Plan',     icon: 'ti-message-dots',     enforced: false },
+  { id: '08', label: 'Stakeholders & Comms', icon: 'ti-building',    enforced: false },
   { id: '10', label: 'Sustainability', icon: 'ti-leaf',             enforced: false },
 ];
 

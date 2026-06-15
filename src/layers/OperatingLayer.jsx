@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useRef } from "react";
 import L3Home               from "./l3/L3Home.jsx";
 import L3Dashboard          from "./l3/L3Dashboard.jsx";
 import L3Tasks              from "./l3/L3Tasks.jsx";
@@ -32,17 +32,48 @@ const TABS = [
   { id:"sustain",   label:"Sustainability",        icon:"🌿" },
 ];
 
+// ── Leave-page save popup ─────────────────────────────────────────────────
+function LeavePopup({ onLogCCR, onMinor, onDiscard, onCancel, tabLabel }) {
+  return (
+    <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.6)", zIndex:1000, display:"flex", alignItems:"center", justifyContent:"center" }}>
+      <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:10, padding:24, maxWidth:420, width:"90%", boxShadow:"0 8px 32px #0008" }}>
+        <div style={{ fontSize:14, fontWeight:700, color:C.sage, marginBottom:6 }}>Unsaved changes</div>
+        <div style={{ fontSize:12, color:C.muted, marginBottom:20, lineHeight:1.6 }}>
+          You've made changes on <strong style={{ color:C.dim }}>{tabLabel}</strong> that haven't been logged. What would you like to do?
+        </div>
+        <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+          <button onClick={onLogCCR} style={{ padding:"10px 14px", background:C.accent, border:"none", borderRadius:6, color:"#fff", fontSize:12, fontWeight:700, cursor:"pointer", textAlign:"left" }}>
+            📋 Log as Change Request (CCR) — major change requiring review & approval
+          </button>
+          <button onClick={onMinor} style={{ padding:"10px 14px", background:C.surface2, border:`1px solid ${C.border}`, borderRadius:6, color:C.dim, fontSize:12, cursor:"pointer", textAlign:"left" }}>
+            💾 Save as minor change — record without formal approval
+          </button>
+          <button onClick={onDiscard} style={{ padding:"10px 14px", background:"none", border:`1px solid ${C.risk}22`, borderRadius:6, color:C.muted, fontSize:12, cursor:"pointer", textAlign:"left" }}>
+            🗑 Discard changes
+          </button>
+          <button onClick={onCancel} style={{ padding:"8px 14px", background:"none", border:"none", borderRadius:6, color:C.muted, fontSize:11, cursor:"pointer" }}>
+            ← Stay on this page
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function OperatingLayer({ state, member, onGoToL2, onMarkComplete, onStateChange, onLogout }) {
-  const [activeTab,   setActiveTab]   = useState("home");
-  const [ccrPending,  setCcrPending]  = useState(null); // pending CCR data for popup
-  const [notification,setNotification]= useState(null); // approval notification banner
+  const [activeTab,    setActiveTab]    = useState("home");
+  const [ccrPending,   setCcrPending]   = useState(null);
+  const [notification, setNotification] = useState(null);
+  // Leave-page detection
+  const [leavePopup,   setLeavePopup]   = useState(null); // { toTab, dirtyDesc }
+  const dirtyRef = useRef(false); // tracks whether current tab has unsaved non-click changes
+  const dirtyDescRef = useRef(""); // human-readable description of what's dirty
 
   const { l2, project } = state;
   const sheets     = l2?.sheets || {};
   const isPM       = member?.isPM;
   const loginCode  = member?.loginCode;
 
-  // Derive live data
   const activities   = sheets["03"]?.data?.activities   || [];
   const milestones   = sheets["03"]?.data?.milestones   || [];
   const risks        = sheets["05"]?.data?.risks        || [];
@@ -56,7 +87,6 @@ export default function OperatingLayer({ state, member, onGoToL2, onMarkComplete
   const sustainData   = state.sustainData               || { evidence: [] };
   const changes      = sheets["06"]?.data?.changes      || [];
 
-  // Auto-build RACI if empty
   const autoRaci = (() => {
     if ((raciData.raciRows||[]).length > 0) return raciData;
     const members = teamMembers.filter(m=>m.name&&m.role);
@@ -75,15 +105,13 @@ export default function OperatingLayer({ state, member, onGoToL2, onMarkComplete
     return { raciRows: rows, customRows: [] };
   })();
 
-  // Count pending CCRs for badge
   const pendingForMe = changes.filter(c => {
     if (c.type !== "major") return false;
-    if (c.status === "pending"  && c.reviewerCode  === loginCode) return true;
-    if (c.status === "reviewed" && c.approverCode  === loginCode) return true;
+    if (c.status === "pending"  && c.reviewerCode === loginCode) return true;
+    if (c.status === "reviewed" && c.approverCode === loginCode) return true;
     return false;
   }).length;
 
-  // ── Save changes to Sheet 06 ─────────────────────────────────────────
   const saveChanges = useCallback((newChanges) => {
     onStateChange(prev => ({
       ...prev,
@@ -100,11 +128,9 @@ export default function OperatingLayer({ state, member, onGoToL2, onMarkComplete
     }));
   }, [onStateChange]);
 
-  // ── Handle baseline field blur — trigger CCR popup ───────────────────
   const handleBaselineBlur = useCallback((elementType, elementId, fieldName, oldValue, newValue, elementName) => {
-    if (String(oldValue) === String(newValue)) return; // no change
+    if (String(oldValue) === String(newValue)) return;
     if (!isBaselineField(elementType, fieldName)) {
-      // Minor change — auto-log
       const newChanges = [...changes, {
         id: generateMinorId(changes),
         type: "minor",
@@ -116,7 +142,6 @@ export default function OperatingLayer({ state, member, onGoToL2, onMarkComplete
       saveChanges(newChanges);
       return;
     }
-    // Baseline change — show popup
     setCcrPending({
       elementType, elementId, fieldName, oldValue, newValue,
       elementName,
@@ -126,7 +151,6 @@ export default function OperatingLayer({ state, member, onGoToL2, onMarkComplete
     });
   }, [changes, member, loginCode, saveChanges]);
 
-  // ── Submit CCR ───────────────────────────────────────────────────────
   const handleCCRSubmit = useCallback(({ justification, priority, impacts }) => {
     if (!ccrPending) return;
     const reviewer = getReviewerForChange(approvers);
@@ -150,7 +174,6 @@ export default function OperatingLayer({ state, member, onGoToL2, onMarkComplete
     setActiveTab("change");
   }, [ccrPending, changes, approvers, saveChanges]);
 
-  // ── Log as minor ─────────────────────────────────────────────────────
   const handleCCRMinor = useCallback(() => {
     if (!ccrPending) return;
     const newChanges = [...changes, {
@@ -168,7 +191,6 @@ export default function OperatingLayer({ state, member, onGoToL2, onMarkComplete
     setCcrPending(null);
   }, [ccrPending, changes, saveChanges]);
 
-  // ── Approve/Reject CCR ───────────────────────────────────────────────
   const handleApproveAction = useCallback((ccrId, newStatus, rejectionReason) => {
     const newChanges = changes.map(c => {
       if (c.id !== ccrId) return c;
@@ -186,7 +208,6 @@ export default function OperatingLayer({ state, member, onGoToL2, onMarkComplete
     }
   }, [changes, saveChanges]);
 
-  // ── Navigate to impacted element ────────────────────────────────────
   const handleNavigateToElement = useCallback((ccr, impact) => {
     if (impact === "Scope" || impact === "Cost") setActiveTab("home");
     else if (impact === "Time") setActiveTab("baseline");
@@ -203,6 +224,80 @@ export default function OperatingLayer({ state, member, onGoToL2, onMarkComplete
     }));
   }, [onStateChange]);
 
+  // ── Tab navigation with leave-page check ─────────────────────────────
+  const TABS_WITH_FORMS = ["baseline", "tasks", "home"];
+  const requestTabChange = (toTab) => {
+    if (toTab === activeTab) return;
+    if (dirtyRef.current && TABS_WITH_FORMS.includes(activeTab)) {
+      setLeavePopup({ toTab, dirtyDesc: dirtyDescRef.current || "unsaved edits" });
+    } else {
+      commitTabChange(toTab);
+    }
+  };
+
+  const commitTabChange = (toTab) => {
+    dirtyRef.current = false;
+    dirtyDescRef.current = "";
+    setLeavePopup(null);
+    setActiveTab(toTab);
+  };
+
+  const handleLeaveLogCCR = () => {
+    const toTab = leavePopup?.toTab;
+    setLeavePopup(null);
+    // Trigger CCR popup with generic description
+    setCcrPending({
+      elementType: "general",
+      elementId: "batch",
+      fieldName: "multiple",
+      oldValue: "",
+      newValue: "",
+      elementName: TABS.find(t=>t.id===activeTab)?.label || activeTab,
+      description: `Batch edits on ${TABS.find(t=>t.id===activeTab)?.label || activeTab}: ${dirtyDescRef.current}`,
+      date: new Date().toLocaleDateString("en-GB"),
+      requestedBy: member?.name || loginCode,
+    });
+    dirtyRef.current = false;
+    dirtyDescRef.current = "";
+    if (toTab) setActiveTab(toTab);
+  };
+
+  const handleLeaveMinor = () => {
+    const toTab = leavePopup?.toTab;
+    const desc  = dirtyDescRef.current || `Changes on ${TABS.find(t=>t.id===activeTab)?.label || activeTab}`;
+    const newChanges = [...changes, {
+      id: generateMinorId(changes),
+      type: "minor",
+      date: new Date().toLocaleDateString("en-GB"),
+      requestedBy: member?.name || loginCode,
+      description: desc,
+    }];
+    saveChanges(newChanges);
+    dirtyRef.current = false;
+    dirtyDescRef.current = "";
+    setLeavePopup(null);
+    if (toTab) setActiveTab(toTab);
+  };
+
+  const handleLeaveDiscard = () => {
+    dirtyRef.current = false;
+    dirtyDescRef.current = "";
+    const toTab = leavePopup?.toTab;
+    setLeavePopup(null);
+    if (toTab) setActiveTab(toTab);
+  };
+
+  // Expose dirty setter to child tabs via prop
+  const setDirty = useCallback((desc) => {
+    dirtyRef.current = true;
+    dirtyDescRef.current = desc || "field edits";
+  }, []);
+
+  const clearDirty = useCallback(() => {
+    dirtyRef.current = false;
+    dirtyDescRef.current = "";
+  }, []);
+
   const sharedProps = {
     state, member, project, sheets, charter,
     activities, milestones, risks, deliverables, stakeholders,
@@ -210,6 +305,7 @@ export default function OperatingLayer({ state, member, onGoToL2, onMarkComplete
     onMarkComplete, onGoToL2, onStateChange,
     onBaselineBlur: handleBaselineBlur,
     sustainConfig, onSustainRecord: handleSustainRecord,
+    onSetDirty: setDirty, onClearDirty: clearDirty,
   };
 
   const TabComponent = {
@@ -222,8 +318,8 @@ export default function OperatingLayer({ state, member, onGoToL2, onMarkComplete
     change:    null,
   }[activeTab];
 
-  const totalTasks = activities.length;
-  const doneTasks  = activities.filter(a=>a._complete).length;
+  const totalTasks = [...activities, ...milestones].length;
+  const doneTasks  = [...activities, ...milestones].filter(a=>a._complete).length;
   const pct        = totalTasks > 0 ? Math.round((doneTasks/totalTasks)*100) : 0;
 
   return (
@@ -295,7 +391,7 @@ export default function OperatingLayer({ state, member, onGoToL2, onMarkComplete
       <div style={{ background:C.surface, borderBottom:`1px solid ${C.border}`, display:"flex",
         padding:"0 20px", flexShrink:0, overflowX:"auto" }}>
         {TABS.map(tab => (
-          <button key={tab.id} onClick={()=>setActiveTab(tab.id)}
+          <button key={tab.id} onClick={()=>requestTabChange(tab.id)}
             style={{ display:"flex", alignItems:"center", gap:5, padding:"0 12px", height:40,
               fontSize:11, fontWeight:600, background:"none", border:"none",
               borderBottom:`2px solid ${activeTab===tab.id?C.accentL:"transparent"}`,
@@ -327,13 +423,17 @@ export default function OperatingLayer({ state, member, onGoToL2, onMarkComplete
           <L3Sustainability state={state} sustainData={sustainData}/>
         ) : activeTab === "baseline" ? (
           <L3IntegratedBaseline
+            state={state}
             activities={activities}
             milestones={milestones}
             raciData={autoRaci}
             project={project}
             loginCodes={teamMembers}
             member={member}
-            onStateChange={onStateChange}/>
+            onStateChange={onStateChange}
+            onBaselineBlur={handleBaselineBlur}
+            onSetDirty={setDirty}
+            onClearDirty={clearDirty}/>
         ) : TabComponent ? (
           <TabComponent {...sharedProps}/>
         ) : null}
@@ -343,12 +443,30 @@ export default function OperatingLayer({ state, member, onGoToL2, onMarkComplete
       {ccrPending && (
         <CCRPopup
           change={ccrPending}
+          approvers={approvers}
           onSubmit={handleCCRSubmit}
           onMinor={handleCCRMinor}
-          onCancel={()=>setCcrPending(null)}/>
+          onClose={()=>setCcrPending(null)}/>
       )}
 
-      <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
+      {/* Leave-page popup */}
+      {leavePopup && (
+        <LeavePopup
+          tabLabel={TABS.find(t=>t.id===activeTab)?.label || activeTab}
+          onLogCCR={handleLeaveLogCCR}
+          onMinor={handleLeaveMinor}
+          onDiscard={handleLeaveDiscard}
+          onCancel={()=>setLeavePopup(null)}/>
+      )}
+
+      {/* Sustainability micro-prompt */}
+      {sharedProps.sustainPrompt && (
+        <SustainabilityPrompt
+          activity={sharedProps.sustainPrompt}
+          config={sustainConfig}
+          onRecord={handleSustainRecord}
+          onClose={()=>{}}/>
+      )}
     </div>
   );
 }

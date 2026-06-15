@@ -324,7 +324,7 @@ Write the summary now. Be direct and factual. Flag any red items clearly.`;
       <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:9,padding:"24px 28px",marginBottom:16}}>
         <div style={{fontSize:16,fontWeight:700,color:C.sage,marginBottom:4}}>Project Workbook Export</div>
         <div style={{fontSize:12,color:C.muted,marginBottom:20,lineHeight:1.6}}>
-          Generates a fully styled Excel workbook with an AI-written Executive Summary on Sheet 00,
+          Generates a fully styled Excel workbook with an AI-generated Executive Summary on Sheet 00,
           followed by all 9 project registers with header formatting, RAG colour coding and freeze panes.
         </div>
 
@@ -377,7 +377,7 @@ Write the summary now. Be direct and factual. Flag any red items clearly.`;
               <div style={{width:16,height:16,border:"2px solid rgba(255,255,255,0.3)",borderTopColor:"#fff",borderRadius:"50%",animation:"spin .8s linear infinite"}}/>
               {genStep}
             </>
-          ) : "✨ Generate AI Workbook"}
+          ) : "📊 Generate Project Workbook"}
         </button>
       </div>
       <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>

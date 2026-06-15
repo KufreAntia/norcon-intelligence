@@ -90,66 +90,86 @@ export default function Sheet06Change({ data, locked, loginCodes, allSheets, onU
         ))}
       </div>
 
-      {activeTab==="approvers" && (
-        <div>
-          {/* Approval tiers reference */}
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:16}}>
-            {APPROVAL_TIERS.map(({tier,desc,color})=>(
-              <div key={tier} style={{background:C.surface,border:`1px solid ${C.border}`,borderLeft:`3px solid ${color}`,borderRadius:6,padding:"10px 12px"}}>
-                <div style={{fontSize:11,fontWeight:700,color,marginBottom:3}}>{tier}</div>
-                <div style={{fontSize:11,color:C.muted,lineHeight:1.4}}>{desc}</div>
-              </div>
-            ))}
-          </div>
-
-          {/* Approver list */}
-          <div style={{fontSize:10,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:".5px",marginBottom:10}}>
-            Team Members & Approval Rights
-          </div>
-          {effectiveApprovers.map((a,i)=>(
-            <div key={i} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:7,padding:"12px 14px",marginBottom:8}}>
-              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10,marginBottom:10}}>
-                <div>
-                  <Lbl c="Name"/>
-                  <input style={inp} value={a.name||""} disabled={locked} onChange={e=>updateApprover(i,"name",e.target.value)} placeholder="Full name"/>
-                </div>
-                <div>
-                  <Lbl c="Role"/>
-                  <input style={inp} value={a.role||""} disabled={locked} onChange={e=>updateApprover(i,"role",e.target.value)} placeholder="Role"/>
-                </div>
-                <div>
-                  <Lbl c="Governance Tier"/>
-                  <select style={inp} value={a.tier||""} disabled={locked} onChange={e=>updateApprover(i,"tier",e.target.value)}>
-                    <option value="">Select...</option>
-                    {["Tier 1 — Sponsor","Tier 2 — Mentor / Assessor","Tier 3 — Project Manager","Tier 4 — Project Team"].map(t=>(
-                      <option key={t} value={t} style={{background:C.surface2}}>{t}</option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-              <div>
-                <Lbl c="Can approve changes to"/>
-                <div style={{display:"flex",gap:6,flexWrap:"wrap",marginTop:4}}>
-                  {RIGHTS_OPTIONS.map(right=>{
-                    const has = (a.rights||[]).includes(right);
+      {activeTab==="approvers" && (() => {
+        // All PM roles to display
+        const ALL_PM_ROLES = [
+          "Project Sponsor","Project Director","Programme Manager","Portfolio Manager",
+          "Project Manager","Deputy Project Manager","Risk Manager","Change Manager",
+          "Quality Manager","Project Support","PMO Analyst",
+        ];
+        // Build role rows: each row = { role, reviewer: bool, approver: bool }
+        const roleRows = ALL_PM_ROLES.map(role => {
+          const match = effectiveApprovers.find(a=>a.role===role);
+          return {
+            role,
+            name: match?.name || "",
+            reviewer: !!(match?.rights||[]).includes("reviewer"),
+            approver: !!(match?.rights||[]).includes("approver"),
+            loginCode: match?.loginCode || "",
+          };
+        });
+        const toggleRoleRight = (role, right) => {
+          if(locked) return;
+          const base = approvers.length > 0 ? [...approvers] : [...initApprovers()];
+          const idx  = base.findIndex(a=>a.role===role);
+          if(idx===-1) {
+            base.push({ name:role, role, tier:"Tier 4 — Project Team", rights:[right], loginCode:"" });
+          } else {
+            const cur = base[idx].rights||[];
+            base[idx] = { ...base[idx], rights: cur.includes(right) ? cur.filter(r=>r!==right) : [...cur,right] };
+          }
+          setApprovers(base);
+          onUpdate({ changes, approvers:base }, "in-progress");
+        };
+        return (
+          <div>
+            <div style={{fontSize:11,color:C.dim,marginBottom:12,lineHeight:1.6}}>
+              Assign <strong style={{color:C.sage}}>Reviewer</strong> and <strong style={{color:C.sage}}>Approver</strong> roles to project management roles.
+              When a change request is raised, it is automatically routed to the designated reviewer then approver.
+            </div>
+            <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:7,overflow:"hidden"}}>
+              <table style={{borderCollapse:"collapse",width:"100%"}}>
+                <thead>
+                  <tr style={{background:C.surface2}}>
+                    <th style={{padding:"8px 12px",fontSize:9,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:".4px",textAlign:"left",width:"60%"}}>PM Role</th>
+                    <th style={{padding:"8px 12px",fontSize:9,fontWeight:700,color:C.accentL,textTransform:"uppercase",letterSpacing:".4px",textAlign:"center"}}>Reviewer</th>
+                    <th style={{padding:"8px 12px",fontSize:9,fontWeight:700,color:C.milestone,textTransform:"uppercase",letterSpacing:".4px",textAlign:"center"}}>Approver</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {roleRows.map((row,i)=>{
+                    const teamMember = effectiveApprovers.find(a=>a.role===row.role);
                     return (
-                      <button key={right} onClick={()=>!locked&&toggleRight(i,right)}
-                        style={{padding:"3px 10px",borderRadius:20,border:`1px solid ${has?C.accent:C.border}`,background:has?"rgba(46,125,82,0.2)":"none",color:has?C.accentL:C.muted,fontSize:10,fontWeight:has?700:400,cursor:locked?"not-allowed":"pointer",textTransform:"capitalize"}}>
-                        {right}
-                      </button>
+                      <tr key={i} style={{borderTop:`1px solid ${C.border}22`,background:i%2===0?C.surface:"transparent"}}>
+                        <td style={{padding:"9px 12px"}}>
+                          <div style={{fontSize:12,color:C.sage,fontWeight:600}}>{row.role}</div>
+                          {teamMember?.name&&<div style={{fontSize:10,color:C.muted,marginTop:2}}>{teamMember.name}{teamMember.loginCode?` · ${teamMember.loginCode}`:""}</div>}
+                          {!teamMember&&<div style={{fontSize:10,color:C.muted,fontStyle:"italic",marginTop:2}}>Not assigned in team</div>}
+                        </td>
+                        <td style={{padding:"9px 12px",textAlign:"center"}}>
+                          <input type="checkbox" checked={row.reviewer}
+                            disabled={locked}
+                            onChange={()=>toggleRoleRight(row.role,"reviewer")}
+                            style={{width:16,height:16,accentColor:C.accentL,cursor:locked?"not-allowed":"pointer"}}/>
+                        </td>
+                        <td style={{padding:"9px 12px",textAlign:"center"}}>
+                          <input type="checkbox" checked={row.approver}
+                            disabled={locked}
+                            onChange={()=>toggleRoleRight(row.role,"approver")}
+                            style={{width:16,height:16,accentColor:C.milestone,cursor:locked?"not-allowed":"pointer"}}/>
+                        </td>
+                      </tr>
                     );
                   })}
-                </div>
-              </div>
-              {a.loginCode&&(
-                <div style={{marginTop:8,fontFamily:"monospace",fontSize:10,color:C.muted}}>
-                  Login: {a.loginCode}
-                </div>
-              )}
+                </tbody>
+              </table>
             </div>
-          ))}
-        </div>
-      )}
+            <div style={{marginTop:10,padding:"8px 12px",background:C.surface2,borderRadius:6,fontSize:10,color:C.muted}}>
+              💡 Reviewer receives the CCR first for initial assessment. Approver has final authority. Multiple roles can hold each right.
+            </div>
+          </div>
+        );
+      })()}
 
       {activeTab==="log" && (
         <div>
