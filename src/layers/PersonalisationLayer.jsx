@@ -116,6 +116,17 @@ export default function PersonalisationLayer({ state, onSheetUpdate, onSheetAppr
             );
           })}
 
+          {/* Logout */}
+          {onLogout && (
+            <div style={{ marginTop:"auto", padding:"10px 14px", borderTop:`1px solid ${C.border}` }}>
+              <button onClick={onLogout}
+                style={{ width:"100%", padding:"7px", background:"none", border:`1px solid ${C.border}`,
+                  borderRadius:5, color:C.muted, fontSize:11, cursor:"pointer", textAlign:"left" }}>
+                ← Log out
+              </button>
+            </div>
+          )}
+
           {/* Team members */}
           {l2.loginCodes.length > 0 && (
             <>
@@ -192,9 +203,17 @@ export default function PersonalisationLayer({ state, onSheetUpdate, onSheetAppr
             </button>
             <div style={{ display:"flex", alignItems:"center", gap:10 }}>
               <span style={{ fontSize:11, color:C.muted }}>{currentIdx + 1} / {SHEETS.length}</span>
-              {onGoToL3 && approvedCount > 0 && (
+              {!nextSheet && onLaunch && (
+                <button onClick={onLaunch}
+                  style={{ padding:"8px 20px", background:"#2E7D52", border:"none", borderRadius:6,
+                    color:"#fff", fontSize:12, fontWeight:700, cursor:"pointer",
+                    display:"flex", alignItems:"center", gap:6 }}>
+                  💾 Save &amp; Launch Project →
+                </button>
+              )}
+              {onGoToL3 && approvedCount > 0 && nextSheet && (
                 <button onClick={onGoToL3} style={{ padding:"5px 12px", background:C.accent, color:"#fff", border:"none", borderRadius:5, fontSize:11, fontWeight:700, cursor:"pointer" }}>
-                  Go to Operating Layer {String.fromCharCode(8594)}
+                  Go to Operating Layer →
                 </button>
               )}
             </div>

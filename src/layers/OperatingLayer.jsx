@@ -21,7 +21,7 @@ const TABS = [
   { id:"report",    label:"Report",    icon:"ti-file-analytics"   },
 ];
 
-export default function OperatingLayer({ state, member, onGoToL2, onMarkComplete, onStateChange }) {
+export default function OperatingLayer({ state, member, onGoToL2, onMarkComplete, onStateChange, onLogout }) {
   const [activeTab, setActiveTab] = useState("home");
 
   const project  = state.project  || {};
@@ -126,6 +126,12 @@ export default function OperatingLayer({ state, member, onGoToL2, onMarkComplete
                 </button>
               ))}
             </div>
+          )}
+          {onLogout && (
+            <button onClick={onLogout}
+              style={{ marginLeft:8, padding:"3px 10px", fontSize:10, fontWeight:600, borderRadius:4, border:`1px solid ${C.border}`, background:"none", color:C.muted, cursor:"pointer" }}>
+              Log out
+            </button>
           )}
         </div>
       </div>

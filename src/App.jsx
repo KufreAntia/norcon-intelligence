@@ -129,6 +129,26 @@ export default function App() {
     setState(prev => ({ ...prev, activeLayer:"L3" }));
   }, []);
 
+  const handleLaunch = useCallback(() => {
+    // Save then go to L3
+    const code = state.project?.code;
+    if (code) {
+      fetch('/api/state', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ code, state }),
+      });
+    }
+    setState(prev => ({ ...prev, activeLayer:"L3" }));
+  }, [state]);
+
+  const handleLogout = useCallback(() => {
+    setState(INITIAL_STATE);
+    setMember(null);
+    setExtStatus("idle");
+    setExtMsg("");
+    setScreen("landing");
+  }, []);
+
   const setLayer = useCallback((layer) => {
     setState(prev => ({ ...prev, activeLayer:layer }));
   }, []);
@@ -152,7 +172,8 @@ export default function App() {
           state={state} member={member || { isPM:true, role:"Project Manager", loginCode:"PM", name:"Project Manager" }}
           onGoToL2={handleGoToL2}
           onMarkComplete={handleMarkComplete}
-          onStateChange={setState}/>
+          onStateChange={setState}
+          onLogout={handleLogout}/>
       )}
 
       {/* Layers 1 & 2 — shared top bar */}
@@ -204,7 +225,7 @@ export default function App() {
               <ProjectSetup project={state.project} l1Charter={state.l1.charter} onComplete={handleSetupComplete}/>
             )}
             {state.activeLayer === "L2" && state.l2.currentSheet !== "setup" && (
-              <PersonalisationLayer state={state} onSheetUpdate={handleSheetUpdate} onSheetApprove={handleSheetApprove} onSheetUnlock={handleSheetUnlock} onSheetNav={handleSheetNav}/>
+              <PersonalisationLayer state={state} onSheetUpdate={handleSheetUpdate} onSheetApprove={handleSheetApprove} onSheetUnlock={handleSheetUnlock} onSheetNav={handleSheetNav} onLaunch={handleLaunch} onLogout={handleLogout}/>
             )}
           </div>
         </>
