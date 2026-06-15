@@ -63,15 +63,17 @@ export default function L3Dashboard({ state, activities, milestones, risks, deli
 
   // Cumulative planned (by activity end date)
   const allItems = [...activities, ...milestones].filter(i=>costData[i._id]?.plannedAmount);
+  const today = new Date().toISOString().slice(0,10);
   const planPts  = allItems
-    .map(i=>({ date:i.targetDate||i.startDate, v:parseFloat(costData[i._id]?.plannedAmount)||0 }))
+    .map(i=>({ date:i.targetDate||i.startDate||today, v:parseFloat(costData[i._id]?.plannedAmount)||0 }))
+    .filter(p=>p.date && p.v>0)
     .sort((a,b)=>new Date(a.date)-new Date(b.date));
   let cumPlan=0; const planLine = planPts.map(p=>({ date:p.date, v:(cumPlan+=p.v) }));
 
   const actPts = expLog.filter(e=>e.amount).map(e=>({ date:e.date, v:parseFloat(e.amount)||0 })).sort((a,b)=>new Date(a.date)-new Date(b.date));
   let cumAct=0; const actLine = actPts.map(p=>({ date:p.date, v:(cumAct+=p.v) }));
 
-  const hasCostData = planLine.length > 0 || actLine.length > 0;
+  const hasCostData = totalPlanned > 0 || totalActual > 0;
 
   // SVG line chart helper
   const renderCostChart = () => {
@@ -178,8 +180,8 @@ export default function L3Dashboard({ state, activities, milestones, risks, deli
         {/* Cost chart */}
         <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:8, padding:"12px 14px" }}>
           <div style={{ fontSize:10, fontWeight:700, color:C.muted, textTransform:"uppercase", letterSpacing:".5px", marginBottom:6 }}>Cost Performance</div>
-          {hasCostData && (
-            <div style={{ display:"flex", gap:10, marginBottom:8 }}>
+          {(totalPlanned > 0 || totalActual > 0) && (
+            <div style={{ display:"flex", gap:10, marginBottom:8, flexWrap:"wrap" }}>
               <div style={{ background:C.surface2, borderRadius:6, padding:"5px 10px", textAlign:"center" }}>
                 <div style={{ fontSize:16, fontWeight:700, color:C.accentL }}>£{totalPlanned.toLocaleString()}</div>
                 <div style={{ fontSize:9, color:C.muted }}>Planned</div>
