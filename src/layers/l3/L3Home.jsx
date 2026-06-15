@@ -1,6 +1,11 @@
 import { useState } from "react";
 
-const C = { surface:"#122E1E", surface2:"#183D28", border:"#1F4D34", accent:"#2E7D52", accentL:"#3a9962", sage:"#E5F0E8", sageDim:"#b8d4c0", dim:"#8aac96", muted:"#5a7a66", stakeholder:"#9c6ee0" };
+const C = {
+  bg:"#0D2B1B", surface:"#122E1E", surface2:"#183D28", border:"#1F4D34",
+  accent:"#2E7D52", accentL:"#3a9962",
+  sage:"#E5F0E8", sageDim:"#b8d4c0", dim:"#8aac96", muted:"#5a7a66",
+  risk:"#e05c5c", stakeholder:"#9c6ee0", milestone:"#e0a23a",
+};
 
 const SUB_PAGES = ["Project Brief","Stakeholders","Project Team","Governance"];
 
@@ -17,7 +22,40 @@ const Field = ({label, value}) => (
   </div>
 );
 
-export default function L3Home({ charter, stakeholders, teamMembers, isPM, onGoToL2 }) {
+// Editable baseline field — fires onBaselineBlur on change + blur
+function BaselineField({ label, value, fieldName, elementId, elementType, onBaselineBlur, multiline }) {
+  const [localVal, setLocalVal] = useState(value||"");
+  const [original]              = useState(value||"");
+
+  const handleBlur = () => {
+    if (String(localVal) !== String(original)) {
+      onBaselineBlur?.(elementType, elementId, fieldName, original, localVal, label);
+    }
+  };
+
+  const style = {
+    width:"100%", background:"transparent", border:"none", borderBottom:`1px solid ${C.border}`,
+    color:C.sage, fontSize:13, padding:"4px 0", outline:"none", fontFamily:"inherit",
+    resize:"none", lineHeight:1.5,
+  };
+
+  return (
+    <div style={{ marginBottom:10 }}>
+      <div style={{ fontSize:10, color:C.accentL, textTransform:"uppercase", letterSpacing:".4px", marginBottom:3 }}>
+        {label} <span style={{ color:C.milestone, fontSize:8 }}>● baseline</span>
+      </div>
+      {multiline ? (
+        <textarea value={localVal} onChange={e=>setLocalVal(e.target.value)} onBlur={handleBlur}
+          style={{ ...style, minHeight:60 }}/>
+      ) : (
+        <input value={localVal} onChange={e=>setLocalVal(e.target.value)} onBlur={handleBlur}
+          style={style}/>
+      )}
+    </div>
+  );
+}
+
+export default function L3Home({ charter, stakeholders, teamMembers, isPM, onGoToL2, onBaselineBlur }) {
   const [sub, setSub] = useState("Project Brief");
 
   return (
@@ -25,7 +63,7 @@ export default function L3Home({ charter, stakeholders, teamMembers, isPM, onGoT
       {/* Sub-nav */}
       <div style={{ display:"flex", gap:4, marginBottom:16, borderBottom:`1px solid ${C.border}`, paddingBottom:8 }}>
         {SUB_PAGES.map(p => (
-          <button key={p} onClick={() => setSub(p)}
+          <button key={p} onClick={()=>setSub(p)}
             style={{ padding:"5px 14px", borderRadius:5, border:"none", fontSize:12, fontWeight:600,
               background: sub===p ? C.accent : "none",
               color: sub===p ? "#fff" : C.muted, cursor:"pointer" }}>
@@ -47,36 +85,69 @@ export default function L3Home({ charter, stakeholders, teamMembers, isPM, onGoT
             </Card>
             <Card>
               <SectionTitle>Timeline & Budget</SectionTitle>
-              <Field label="Start Date" value={charter.startDate}/>
-              <Field label="End Date"   value={charter.endDate}/>
-              <Field label="Budget"     value={charter.budget}/>
-              <div style={{ marginTop:12, paddingTop:12, borderTop:`1px solid ${C.border}` }}>
-                {isPM && (
-                  <button onClick={onGoToL2} style={{ fontSize:11, padding:"6px 12px", background:"none", border:`1px solid ${C.border}`, borderRadius:5, color:C.muted, cursor:"pointer" }}>
+              {onBaselineBlur ? (
+                <>
+                  <BaselineField label="Start Date" value={charter.startDate} fieldName="startDate"
+                    elementId="charter" elementType="charter" onBaselineBlur={onBaselineBlur}/>
+                  <BaselineField label="End Date" value={charter.endDate} fieldName="endDate"
+                    elementId="charter" elementType="charter" onBaselineBlur={onBaselineBlur}/>
+                  <BaselineField label="Budget" value={charter.budget} fieldName="budget"
+                    elementId="charter" elementType="charter" onBaselineBlur={onBaselineBlur}/>
+                </>
+              ) : (
+                <>
+                  <Field label="Start Date" value={charter.startDate}/>
+                  <Field label="End Date"   value={charter.endDate}/>
+                  <Field label="Budget"     value={charter.budget}/>
+                </>
+              )}
+              {isPM && (
+                <div style={{ marginTop:12, paddingTop:12, borderTop:`1px solid ${C.border}` }}>
+                  <button onClick={onGoToL2}
+                    style={{ fontSize:11, padding:"6px 12px", background:"none", border:`1px solid ${C.border}`,
+                      borderRadius:5, color:C.muted, cursor:"pointer" }}>
                     ← Go to Personalisation Layer
                   </button>
-                )}
-              </div>
+                </div>
+              )}
             </Card>
+
             <Card style={{ gridColumn:"1/-1" }}>
               <SectionTitle>Purpose</SectionTitle>
-              <div style={{ fontSize:13, color:C.sage, lineHeight:1.6 }}>{charter.purpose||"—"}</div>
+              {onBaselineBlur ? (
+                <BaselineField label="Purpose" value={charter.purpose} fieldName="purpose"
+                  elementId="charter" elementType="charter" onBaselineBlur={onBaselineBlur} multiline/>
+              ) : (
+                <div style={{ fontSize:13, color:C.sage, lineHeight:1.6 }}>{charter.purpose||"—"}</div>
+              )}
             </Card>
+
             <Card style={{ gridColumn:"1/-1" }}>
               <SectionTitle>Problem Statement</SectionTitle>
               <div style={{ fontSize:13, color:C.sage, lineHeight:1.6 }}>{charter.problemStatement||"—"}</div>
             </Card>
           </div>
-          {/* Scope */}
+
+          {/* Scope — baseline fields */}
           {((charter.withinScope||[]).length > 0 || (charter.outOfScope||[]).length > 0) && (
             <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>
               <Card>
                 <SectionTitle>Within Scope</SectionTitle>
-                {(charter.withinScope||[]).map((s,i) => <div key={i} style={{ fontSize:12, color:C.dim, marginBottom:4 }}>✓ {s}</div>)}
+                {onBaselineBlur ? (
+                  <BaselineField label="Within Scope" value={(charter.withinScope||[]).join("\n")} fieldName="withinScope"
+                    elementId="charter" elementType="charter" onBaselineBlur={onBaselineBlur} multiline/>
+                ) : (
+                  (charter.withinScope||[]).map((s,i) => <div key={i} style={{ fontSize:12, color:C.dim, marginBottom:4 }}>✓ {s}</div>)
+                )}
               </Card>
               <Card>
                 <SectionTitle>Out of Scope</SectionTitle>
-                {(charter.outOfScope||[]).map((s,i) => <div key={i} style={{ fontSize:12, color:C.muted, marginBottom:4 }}>✕ {s}</div>)}
+                {onBaselineBlur ? (
+                  <BaselineField label="Out of Scope" value={(charter.outOfScope||[]).join("\n")} fieldName="outOfScope"
+                    elementId="charter" elementType="charter" onBaselineBlur={onBaselineBlur} multiline/>
+                ) : (
+                  (charter.outOfScope||[]).map((s,i) => <div key={i} style={{ fontSize:12, color:C.muted, marginBottom:4 }}>✕ {s}</div>)
+                )}
               </Card>
             </div>
           )}
@@ -92,14 +163,15 @@ export default function L3Home({ charter, stakeholders, teamMembers, isPM, onGoT
               return (
                 <Card key={i}>
                   <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:8 }}>
-                    <div style={{ width:32, height:32, borderRadius:"50%", background:"rgba(156,110,224,0.15)", border:`1px solid ${C.stakeholder}`, display:"flex", alignItems:"center", justifyContent:"center", fontSize:14, flexShrink:0 }}>👤</div>
+                    <div style={{ width:32, height:32, borderRadius:"50%", background:"rgba(156,110,224,0.15)",
+                      border:`1px solid ${C.stakeholder}`, display:"flex", alignItems:"center", justifyContent:"center", fontSize:14 }}>👤</div>
                     <div>
                       <div style={{ fontSize:13, fontWeight:700, color:C.sage }}>{s.name||"—"}</div>
                       <div style={{ fontSize:10, color:C.muted }}>{s.category||"—"}</div>
                     </div>
                     <div style={{ marginLeft:"auto", fontSize:11, fontWeight:700, color:C.stakeholder }}>★ {ps}</div>
                   </div>
-                  <Field label="Contact" value={s.contact}/>
+                  <Field label="Contact"             value={s.contact}/>
                   <Field label="Engagement Strategy" value={s.engagementStrategy}/>
                   <div style={{ display:"flex", gap:6, marginTop:6 }}>
                     {[["P",s.power],["I",s.interest],["In",s.influence],["E",s.ease]].map(([l,v])=>(
@@ -123,14 +195,16 @@ export default function L3Home({ charter, stakeholders, teamMembers, isPM, onGoT
             {teamMembers.map((m,i) => (
               <Card key={i} style={{ borderLeft: i===0 ? `3px solid ${C.accentL}` : `1px solid ${C.border}` }}>
                 <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:10 }}>
-                  <div style={{ width:36, height:36, borderRadius:"50%", background:"rgba(46,125,82,0.15)", border:`1px solid ${C.border}`, display:"flex", alignItems:"center", justifyContent:"center", fontSize:16 }}>👤</div>
+                  <div style={{ width:36, height:36, borderRadius:"50%", background:"rgba(46,125,82,0.15)",
+                    border:`1px solid ${C.border}`, display:"flex", alignItems:"center", justifyContent:"center", fontSize:16 }}>👤</div>
                   <div>
                     <div style={{ fontSize:13, fontWeight:700, color:C.sage }}>{m.name||"—"}</div>
                     <div style={{ fontSize:10, color:C.muted }}>{m.role||"—"}</div>
                   </div>
                 </div>
-                <div style={{ fontFamily:"monospace", fontSize:12, color:C.accentL, background:"rgba(46,125,82,0.1)", padding:"4px 8px", borderRadius:5, display:"inline-block", marginBottom:6 }}>{m.loginCode}</div>
-                {m.deliveryRole && <div style={{ fontSize:11, color:C.dim }}>Delivery: {m.deliveryRole}</div>}
+                <div style={{ fontFamily:"monospace", fontSize:12, color:C.accentL, background:"rgba(46,125,82,0.1)",
+                  padding:"4px 8px", borderRadius:5, display:"inline-block", marginBottom:6 }}>{m.loginCode}</div>
+                {m.deliveryRole  && <div style={{ fontSize:11, color:C.dim }}>Delivery: {m.deliveryRole}</div>}
                 {m.availability  && <div style={{ fontSize:11, color:C.muted }}>Availability: {m.availability}</div>}
                 {m.location      && <div style={{ fontSize:11, color:C.muted }}>Location: {m.location}</div>}
               </Card>
@@ -143,10 +217,10 @@ export default function L3Home({ charter, stakeholders, teamMembers, isPM, onGoT
         <div style={{ maxWidth:800 }}>
           <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12, marginBottom:12 }}>
             {[
-              ["Tier 1 — Sponsor","Final authority. Approves charter, scope changes, gate sign-offs.","#e0a23a"],
-              ["Tier 2 — Mentor / Assessor","Independent assurance. Reviews documents and deliverables.","#3a9ce0"],
-              ["Tier 3 — Project Manager","Day-to-day authority. Manages schedule, risk, communications.","#3a9962"],
-              ["Tier 4 — Project Team","Deliver agreed tasks within scope. Escalate issues to PM.","#8aac96"],
+              ["Tier 1 — Sponsor",          "Final authority. Approves charter, scope changes, gate sign-offs.","#e0a23a"],
+              ["Tier 2 — Mentor / Assessor", "Independent assurance. Reviews documents and deliverables.",       "#3a9ce0"],
+              ["Tier 3 — Project Manager",   "Day-to-day authority. Manages schedule, risk, communications.",   "#3a9962"],
+              ["Tier 4 — Project Team",      "Deliver agreed tasks within scope. Escalate issues to PM.",       "#8aac96"],
             ].map(([tier,desc,col])=>(
               <Card key={tier} style={{ borderLeft:`3px solid ${col}` }}>
                 <div style={{ fontSize:12, fontWeight:700, color:col, marginBottom:4 }}>{tier}</div>
@@ -157,7 +231,7 @@ export default function L3Home({ charter, stakeholders, teamMembers, isPM, onGoT
           <Card>
             <SectionTitle>Change Control Process</SectionTitle>
             <div style={{ display:"flex", gap:8, overflowX:"auto" }}>
-              {[["1","Identify","Team member spots change"],["2","Log","PM assigns CCR ID"],["3","Assess","Impact on scope/time/cost"],["4","PM Approve","Minor changes"],["5","Sponsor","Baseline changes"],["6","Notify","All team informed"]].map(([n,t,d])=>(
+              {[["1","Detect","Edit scope / time / cost"],["2","Pop-up","Submit Change Request"],["3","CCR Created","Routed to Reviewer"],["4","PM Reviews","Checks impacted elements"],["5","Sponsor","Signs off baseline"],["6","Goes Live","All team notified"]].map(([n,t,d])=>(
                 <div key={n} style={{ background:C.surface2, borderRadius:6, padding:"8px 10px", minWidth:100, flexShrink:0 }}>
                   <div style={{ fontSize:9, color:C.accentL, fontWeight:700, marginBottom:2 }}>Step {n}</div>
                   <div style={{ fontSize:11, color:C.sage, fontWeight:600, marginBottom:2 }}>{t}</div>

@@ -1,9 +1,11 @@
 import { useState } from "react";
+import SustainabilityPrompt from "./SustainabilityPrompt.jsx";
 
 const C = { surface:"#122E1E", surface2:"#183D28", border:"#1F4D34", accent:"#2E7D52", accentL:"#3a9962", sage:"#E5F0E8", sageDim:"#b8d4c0", dim:"#8aac96", muted:"#5a7a66", risk:"#e05c5c", milestone:"#e0a23a", activity:"#3ae0a2" };
 
-export default function L3Tasks({ activities, milestones, member, raciData, onMarkComplete }) {
+export default function L3Tasks({ activities, milestones, member, raciData, onMarkComplete, sustainConfig, onSustainRecord }) {
   const [filter, setFilter] = useState("all");
+  const [sustainPrompt, setSustainPrompt] = useState(null); // activity awaiting sustainability prompt
 
   const loginCode = member?.loginCode;
   const raciRows  = [...(raciData.raciRows||[]), ...(raciData.customRows||[])];
@@ -103,7 +105,13 @@ export default function L3Tasks({ activities, milestones, member, raciData, onMa
                       ✓ Undo
                     </button>
                   ) : (
-                    <button onClick={() => onMarkComplete(item._id, item.itemType, true)}
+                    <button onClick={() => {
+                        if (sustainConfig && Object.values(sustainConfig.enabled||{}).some(Boolean)) {
+                          setSustainPrompt(item);
+                        } else {
+                          onMarkComplete(item._id, item.itemType, true);
+                        }
+                      }}
                       style={{ padding:"4px 10px", background:C.accent, border:"none", borderRadius:5, color:"#fff", fontSize:10, fontWeight:700, cursor:"pointer", whiteSpace:"nowrap" }}>
                       ✓ Mark Complete
                     </button>
@@ -116,6 +124,20 @@ export default function L3Tasks({ activities, milestones, member, raciData, onMa
           );
         })}
       </div>
+      {sustainPrompt && (
+        <SustainabilityPrompt
+          activity={sustainPrompt}
+          sustainConfig={sustainConfig}
+          onRecord={(ev) => {
+            onSustainRecord?.(ev);
+            onMarkComplete(sustainPrompt._id, sustainPrompt.itemType, true);
+            setSustainPrompt(null);
+          }}
+          onSkip={() => {
+            onMarkComplete(sustainPrompt._id, sustainPrompt.itemType, true);
+            setSustainPrompt(null);
+          }}/>
+      )}
     </div>
   );
 }
