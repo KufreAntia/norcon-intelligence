@@ -88,7 +88,7 @@ export default function L3RACI({ raciData, teamMembers, member, activities, mile
                       {done ? (
                         <span style={{ fontSize:10, color:C.activity, fontWeight:700 }}>✓ Complete</span>
                       ) : canComplete(row.taskId) ? (
-                        <button onClick={() => onMarkComplete(row.taskId, "activity")}
+                        <button onClick={() => onMarkComplete(row.taskId, "activity", true)}
                           style={{ padding:"3px 9px", background:C.accent, border:"none", borderRadius:4, color:"#fff", fontSize:10, fontWeight:700, cursor:"pointer" }}>
                           ✓ Mark Done
                         </button>

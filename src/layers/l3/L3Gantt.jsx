@@ -188,8 +188,9 @@ export default function L3Gantt({ activities, milestones, member, onStateChange 
                                 <div style={{fontSize:11,color:item._complete?C.muted:C.sage,textDecoration:item._complete?"line-through":"none",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
                                   {isMil?"🏁 ":""}{item.name||item.description||"—"}
                                 </div>
-                                <div style={{fontSize:9,color:C.muted,display:"flex",gap:6}}>
+                                <div style={{fontSize:9,color:C.muted,display:"flex",gap:6,flexWrap:"wrap"}}>
                                   <span>{item._id}</span>
+                                  {(item.responsible||item._suggestedOwner)&&<span style={{color:C.accentL}}>● {item.responsible||item._suggestedOwner}</span>}
                                   {item._autoDate&&<span style={{color:C.milestone}}>est.</span>}
                                   {item._complete&&<span style={{color:C.activity}}>✓</span>}
                                 </div>
