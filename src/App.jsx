@@ -111,7 +111,7 @@ export default function App() {
   const handleSheetUpdate = useCallback((sheetId, data, status) => {
     setState(prev => ({
       ...prev,
-      l2: { ...prev.l2, sheets: { ...prev.l2.sheets, [sheetId]:{ ...prev.l2.sheets[sheetId], data, status: status||prev.l2.sheets[sheetId].status } } },
+      l2: { ...prev.l2, sheets: { ...prev.l2.sheets, [sheetId]:{ ...prev.l2.sheets[sheetId], data: { ...prev.l2.sheets[sheetId]?.data, ...data }, status: status||prev.l2.sheets[sheetId].status } } },
     }));
   }, []);
 
