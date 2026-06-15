@@ -59,8 +59,11 @@ export default function L3ChangeControl({ changes, approvers, member, onApproveA
     return false;
   }).length;
 
-  const canReview  = (c) => c.status === "pending"  && c.reviewerCode  === loginCode;
-  const canApprove = (c) => c.status === "reviewed" && c.approverCode  === loginCode;
+  // Can review: user is the designated reviewer, OR no reviewer assigned and user is PM
+  const canReview  = (c) => c.status === "pending"  && (c.reviewerCode === loginCode || (isPM && !c.reviewerCode));
+  // Can approve: user is the designated approver, OR no approver assigned and user is PM
+  // Also: if reviewer === approver (same person), they can approve after reviewing
+  const canApprove = (c) => c.status === "reviewed" && (c.approverCode === loginCode || (isPM && !c.approverCode) || (c.reviewerCode === loginCode && !c.approverCode));
   const canReject  = (c) => (c.status === "pending" || c.status === "reviewed") && (c.reviewerCode === loginCode || c.approverCode === loginCode || isPM);
 
   const handleReview = (ccrId) => onApproveAction(ccrId, "reviewed", null);
@@ -181,7 +184,7 @@ export default function L3ChangeControl({ changes, approvers, member, onApproveA
                     </div>
                     <div>
                       <div style={{ fontSize:9, color:C.muted, textTransform:"uppercase" }}>Reviewed by</div>
-                      <div style={{ fontSize:11, color:C.dim }}>{ccr.reviewerName||"—"}</div>
+                      <div style={{ fontSize:11, color:C.dim }}>{ccr.reviewerName || (ccr.reviewerCode ? ccr.reviewerCode : "—")}</div>
                     </div>
                     {canReview(ccr) && (
                       <button onClick={() => handleReview(ccr.id)}
@@ -207,7 +210,7 @@ export default function L3ChangeControl({ changes, approvers, member, onApproveA
                     </div>
                     <div>
                       <div style={{ fontSize:9, color:C.muted, textTransform:"uppercase" }}>Approved by</div>
-                      <div style={{ fontSize:11, color:C.dim }}>{ccr.approverName||"—"}</div>
+                      <div style={{ fontSize:11, color:C.dim }}>{ccr.approverName || (ccr.approverCode ? ccr.approverCode : "—")}</div>
                     </div>
                     {canApprove(ccr) && (
                       <button onClick={() => handleApprove(ccr.id)}

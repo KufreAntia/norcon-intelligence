@@ -65,17 +65,28 @@ export function getDisplayValue(element, fieldName, allChanges, currentUserCode)
   return canSeeProposed ? pending.proposedValue : element[fieldName];
 }
 
-// Determine if a change needs CCR based on approval rights
+// Determine approver for a change.
+// Supports BOTH old tier-based and new rights-based approver structures.
 export function getApproverForChange(impacts, approvers) {
   if (!approvers || !approvers.length) return null;
-  // Scope/budget = Tier 1 approver; Time/Quality = Tier 3
-  const needsTier1 = impacts.includes('Scope') || impacts.includes('Cost');
+
+  // New system: rights array contains "approver"
+  const byRights = approvers.find(a => (a.rights || []).includes('approver'));
+  if (byRights) return byRights;
+
+  // Legacy: tier-based
+  const needsTier1 = (impacts || []).includes('Scope') || (impacts || []).includes('Cost');
   const tier = needsTier1 ? 'Tier 1 — Sponsor' : 'Tier 3 — Project Manager';
   return approvers.find(a => a.tier === tier) || approvers[0];
 }
 
 export function getReviewerForChange(approvers) {
   if (!approvers || !approvers.length) return null;
-  // Reviewer is typically Tier 3 PM (or whoever has 'scope'/'budget' rights but not Tier 1)
+
+  // New system: rights array contains "reviewer"
+  const byRights = approvers.find(a => (a.rights || []).includes('reviewer'));
+  if (byRights) return byRights;
+
+  // Legacy: Tier 3 PM
   return approvers.find(a => a.tier === 'Tier 3 — Project Manager') || approvers[0];
 }
