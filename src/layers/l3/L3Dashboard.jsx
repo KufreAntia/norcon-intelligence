@@ -60,45 +60,106 @@ export default function L3Dashboard({ state, activities, milestones, risks, deli
   const totalPlanned = Object.values(costData).reduce((s,c)=>s+(parseFloat(c.plannedAmount)||0),0);
   const totalActual  = expLog.reduce((s,e)=>s+(parseFloat(e.amount)||0),0);
   const costVariance = totalPlanned - totalActual;
+  const hasCostData  = totalPlanned > 0 || totalActual > 0;
 
-  // Cumulative planned (by activity end date)
-  const allItems = [...activities, ...milestones].filter(i=>costData[i._id]?.plannedAmount);
-  const today = new Date().toISOString().slice(0,10);
-  const planPts  = allItems
-    .map(i=>({ date:i.targetDate||i.startDate||today, v:parseFloat(costData[i._id]?.plannedAmount)||0 }))
-    .filter(p=>p.date && p.v>0)
-    .sort((a,b)=>new Date(a.date)-new Date(b.date));
-  let cumPlan=0; const planLine = planPts.map(p=>({ date:p.date, v:(cumPlan+=p.v) }));
-
-  const actPts = expLog.filter(e=>e.amount).map(e=>({ date:e.date, v:parseFloat(e.amount)||0 })).sort((a,b)=>new Date(a.date)-new Date(b.date));
-  let cumAct=0; const actLine = actPts.map(p=>({ date:p.date, v:(cumAct+=p.v) }));
-
-  const hasCostData = totalPlanned > 0 || totalActual > 0;
-
-  // SVG line chart helper
+  // ── Cost chart — planned spread across time vs actual expenditure ─────
   const renderCostChart = () => {
-    if(!hasCostData) return <div style={{ fontSize:11, color:C.muted, fontStyle:"italic", padding:8 }}>No cost data entered yet.</div>;
-    const allPts  = [...planLine, ...actLine];
-    const dates   = allPts.map(p=>new Date(p.date)).sort((a,b)=>a-b);
-    const minD    = dates[0], maxD = dates[dates.length-1];
-    const maxV    = Math.max(...planLine.map(p=>p.v), ...actLine.map(p=>p.v), 1);
-    const xOf = d => 30 + ((new Date(d)-minD)/(Math.max(maxD-minD,1)))*240;
-    const yOf = v => 120 - (v/maxV)*100;
-    const planPath = planLine.map((p,i)=>`${i===0?"M":"L"}${xOf(p.date).toFixed(1)},${yOf(p.v).toFixed(1)}`).join(" ");
-    const actPath  = actLine.map((p,i)=>`${i===0?"M":"L"}${xOf(p.date).toFixed(1)},${yOf(p.v).toFixed(1)}`).join(" ");
+    if (!hasCostData) return (
+      <div style={{ fontSize:11, color:C.muted, fontStyle:"italic", padding:8 }}>
+        No cost data entered yet. Add planned costs in Integrated Baseline.
+      </div>
+    );
+
+    // Per-activity planned points ordered by target date
+    const datedItems = [...activities, ...milestones]
+      .filter(i => costData[i._id]?.plannedAmount && (i.targetDate || i.startDate))
+      .map(i => ({ date: i.targetDate || i.startDate, v: parseFloat(costData[i._id].plannedAmount) || 0 }))
+      .sort((a, b) => new Date(a.date) - new Date(b.date));
+
+    // Actual expenditure points
+    const actPts = expLog
+      .filter(e => e.amount && e.date)
+      .map(e => ({ date: e.date, v: parseFloat(e.amount) || 0 }))
+      .sort((a, b) => new Date(a.date) - new Date(b.date));
+
+    // Cumulative actual
+    let cumA = 0;
+    const actLine = actPts.map(p => ({ date: p.date, v: (cumA += p.v) }));
+
+    // Cumulative planned — use activity dates if available, else S-curve across project span
+    let planLine = [];
+    if (datedItems.length >= 2) {
+      let cumP = 0;
+      planLine = datedItems.map(p => ({ date: p.date, v: (cumP += p.v) }));
+    } else if (totalPlanned > 0) {
+      // Build a smooth S-curve across the date span we can infer
+      const allDates = [
+        ...activities.map(a => a.startDate || a.targetDate),
+        ...milestones.map(m => m.startDate || m.targetDate),
+        ...actLine.map(p => p.date),
+      ].filter(Boolean).sort();
+      const lineStart = allDates.length ? new Date(allDates[0]) : new Date();
+      const lineEnd   = allDates.length > 1 ? new Date(allDates[allDates.length-1]) : new Date(lineStart.getTime() + 90*86400000);
+      // 6-point S-curve: slow start, steep middle, tailing off
+      [[0,0],[0.15,0.05],[0.35,0.2],[0.55,0.5],[0.75,0.8],[0.9,0.95],[1,1]].forEach(([tPct, vPct]) => {
+        const d = new Date(lineStart.getTime() + tPct * (lineEnd - lineStart));
+        planLine.push({ date: d.toISOString().slice(0,10), v: vPct * totalPlanned });
+      });
+    }
+
+    if (!planLine.length && !actLine.length) return (
+      <div style={{ fontSize:11, color:C.muted, fontStyle:"italic", padding:8 }}>
+        Set activity dates in Integrated Baseline to display the cost curve.
+      </div>
+    );
+
+    // Chart bounds
+    const allMs = [...planLine, ...actLine].map(p => new Date(p.date).getTime()).filter(n => !isNaN(n));
+    const minMs = Math.min(...allMs);
+    const maxMs = Math.max(...allMs);
+    const span  = Math.max(maxMs - minMs, 86400000);
+    const maxV  = Math.max(...planLine.map(p=>p.v), ...actLine.map(p=>p.v), 1);
+
+    const X1 = 40, X2 = 282, Y1 = 20, Y2 = 118;
+    const xOf = d => X1 + ((new Date(d).getTime() - minMs) / span) * (X2 - X1);
+    const yOf = v => Y2  - (v / maxV) * (Y2 - Y1);
+    const fmtTick = ms => new Date(ms).toLocaleDateString("en-GB", { day:"2-digit", month:"short" });
+
+    const planPath = planLine.map((p,i) => `${i===0?"M":"L"}${xOf(p.date).toFixed(1)},${yOf(p.v).toFixed(1)}`).join(" ");
+    const actPath  = actLine.map((p,i)  => `${i===0?"M":"L"}${xOf(p.date).toFixed(1)},${yOf(p.v).toFixed(1)}`).join(" ");
+
     return (
-      <svg width="100%" height="130" viewBox="0 0 300 130" style={{ display:"block" }}>
-        <line x1="30" y1="120" x2="280" y2="120" stroke={C.border} strokeWidth="1"/>
-        <line x1="30" y1="20"  x2="30"  y2="120" stroke={C.border} strokeWidth="1"/>
-        <text x="32" y="19" fill={C.muted} fontSize="8">£{maxV.toLocaleString()}</text>
-        {planPath && <path d={planPath} stroke={C.accentL}  fill="none" strokeWidth="2" strokeDasharray="4 2"/>}
-        {actPath  && <path d={actPath}  stroke={C.milestone} fill="none" strokeWidth="2"/>}
-        <text x="200" y="130" fill={C.accentL}  fontSize="8">-- Planned</text>
-        <text x="200" y="122" fill={C.milestone} fontSize="8">—— Actual</text>
+      <svg width="100%" height="155" viewBox="0 0 300 155" style={{ display:"block" }}>
+        {/* Axes */}
+        <line x1={X1} y1={Y2} x2={X2} y2={Y2} stroke={C.border} strokeWidth="1"/>
+        <line x1={X1} y1={Y1} x2={X1} y2={Y2} stroke={C.border} strokeWidth="1"/>
+        {/* Y axis labels */}
+        <text x="2" y={Y1+6} fill={C.muted} fontSize="7">£{maxV.toLocaleString()}</text>
+        <text x="2" y={Y2}   fill={C.muted} fontSize="7">£0</text>
+        {/* X axis date labels */}
+        <text x={X1}  y="132" fill={C.muted} fontSize="7" textAnchor="middle">{fmtTick(minMs)}</text>
+        <text x={X2}  y="132" fill={C.muted} fontSize="7" textAnchor="middle">{fmtTick(maxMs)}</text>
+        {/* Horizontal grid lines */}
+        {[0.25,0.5,0.75].map(pct => (
+          <line key={pct} x1={X1} y1={yOf(maxV*pct).toFixed(0)} x2={X2} y2={yOf(maxV*pct).toFixed(0)}
+            stroke={C.border} strokeWidth="1" opacity="0.35" strokeDasharray="3 3"/>
+        ))}
+        {/* Planned line (dashed) */}
+        {planPath && <path d={planPath} stroke={C.accentL} fill="none" strokeWidth="2" strokeDasharray="5 3"/>}
+        {/* Actual line (solid) */}
+        {actPath  && <path d={actPath}  stroke={C.milestone} fill="none" strokeWidth="2.5"/>}
+        {/* Dots on actual data points */}
+        {actLine.map((p,i) => (
+          <circle key={i} cx={xOf(p.date).toFixed(1)} cy={yOf(p.v).toFixed(1)} r="3" fill={C.milestone} stroke={C.surface} strokeWidth="1"/>
+        ))}
+        {/* Legend */}
+        <line x1="150" y1="147" x2="166" y2="147" stroke={C.accentL} strokeWidth="2" strokeDasharray="5 3"/>
+        <text x="169" y="150" fill={C.accentL} fontSize="8">Planned</text>
+        <line x1="215" y1="147" x2="231" y2="147" stroke={C.milestone} strokeWidth="2.5"/>
+        <text x="234" y="150" fill={C.milestone} fontSize="8">Actual</text>
       </svg>
     );
   };
-
   return (
     <div style={{ padding:20, overflowY:"auto", height:"100%" }}>
       {/* Metric cards */}
