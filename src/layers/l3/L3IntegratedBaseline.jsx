@@ -39,7 +39,13 @@ function autoDate(items) {
   });
   let cur = addDays(new Date(), 1);
   return sorted.map(item => {
-    if (item._autoDate === false && (item.startDate || item.targetDate)) return item;
+    if (item._autoDate === false && (item.startDate || item.targetDate)) {
+      // Advance cur past this manually-dated item so auto items don't overlap it
+      const end = new Date(item.targetDate || item.startDate);
+      const afterEnd = addDays(end, 2);
+      if (afterEnd > cur) cur = afterEnd;
+      return item;
+    }
     const s = new Date(cur);
     const dur = item.itemType === "milestone" ? 0 : 13;
     const e = addDays(s, dur);
@@ -242,19 +248,16 @@ export default function L3IntegratedBaseline({ state, activities, milestones, me
     const oldItems = itemType === "milestone" ? milestones : activities;
     const old = oldItems.find(i => i._id === taskId);
     onBaselineBlur && onBaselineBlur(itemType, taskId, field, old?.[field]||"", newVal, old?.name||taskId);
-    // Build the updated list immediately so we can persist it in the same call
-    const updatedList = (key === "milestones" ? milestones : activities)
-      .map(i => i._id === taskId ? { ...i, [field]: newVal, _autoDate: false } : i);
-    // Persist to Redis so date changes survive a page refresh
-    saveSheet03({ [key]: updatedList });
+    // Single atomic setState — no race condition between two separate onStateChange calls
     onStateChange(prev => {
       const d03 = prev.l2.sheets["03"]?.data || {};
+      const updatedList = (d03[key]||[]).map(i => i._id === taskId ? { ...i, [field]: newVal, _autoDate: false } : i);
       return {
         ...prev,
         l2: { ...prev.l2, sheets: { ...prev.l2.sheets,
           "03": { ...prev.l2.sheets["03"], data: {
             ...d03,
-            [key]: (d03[key]||[]).map(i => i._id === taskId ? { ...i, [field]: newVal, _autoDate: false } : i),
+            [key]: updatedList,
           }},
         }},
       };
