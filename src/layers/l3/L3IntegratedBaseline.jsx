@@ -242,6 +242,11 @@ export default function L3IntegratedBaseline({ state, activities, milestones, me
     const oldItems = itemType === "milestone" ? milestones : activities;
     const old = oldItems.find(i => i._id === taskId);
     onBaselineBlur && onBaselineBlur(itemType, taskId, field, old?.[field]||"", newVal, old?.name||taskId);
+    // Build the updated list immediately so we can persist it in the same call
+    const updatedList = (key === "milestones" ? milestones : activities)
+      .map(i => i._id === taskId ? { ...i, [field]: newVal, _autoDate: false } : i);
+    // Persist to Redis so date changes survive a page refresh
+    saveSheet03({ [key]: updatedList });
     onStateChange(prev => {
       const d03 = prev.l2.sheets["03"]?.data || {};
       return {
