@@ -26,7 +26,7 @@ function addDays(d, n) {
   r.setDate(r.getDate() + n);
   return r;
 }
-function toISO(d) { return d.toISOString().slice(0, 10); }
+function toISO(d) { try { return d.toISOString().slice(0, 10); } catch(e) { return ""; } }
 function fmtD(d) {
   if (!d) return "";
   return new Date(d).toLocaleDateString("en-GB", { day:"2-digit", month:"short", year:"2-digit" });
@@ -42,8 +42,10 @@ function autoDate(items) {
     if (item._autoDate === false && (item.startDate || item.targetDate)) {
       // Advance cur past this manually-dated item so auto items don't overlap it
       const end = new Date(item.targetDate || item.startDate);
-      const afterEnd = addDays(end, 2);
-      if (afterEnd > cur) cur = afterEnd;
+      if (!isNaN(end.getTime())) {
+        const afterEnd = addDays(end, 2);
+        if (afterEnd > cur) cur = afterEnd;
+      }
       return item;
     }
     const s = new Date(cur);
@@ -128,7 +130,7 @@ function GanttSVG({ items, gStart, gEnd, DAY_W, ROW_H, phases }) {
       {/* ── Today line (full height) ── */}
       <line x1={todayX} y1={0} x2={todayX} y2={totalH} stroke={C.accentL} strokeWidth={2} opacity={0.5}/>
 
-      {/* ── Row backgrounds + grid ── */}
+      {/* ── Row backgrounds ── */}
       {rows.map((row, ri) => {
         if (row.type === "phase") {
           return (
@@ -142,14 +144,16 @@ function GanttSVG({ items, gStart, gEnd, DAY_W, ROW_H, phases }) {
         return (
           <g key={ri}>
             <rect x={0} y={row.y} width={W} height={ROW_H} fill={bg}/>
-            {/* Week grid lines */}
-            {weeks.map((_, wi) => (
-              <line key={wi} x1={wi*7*DAY_W} y1={row.y} x2={wi*7*DAY_W} y2={row.y+ROW_H} stroke={C.border} strokeWidth={1} opacity={0.15}/>
-            ))}
             <line x1={0} y1={row.y+ROW_H} x2={W} y2={row.y+ROW_H} stroke={C.border} strokeWidth={1} opacity={0.2}/>
           </g>
         );
       })}
+      {/* ── Week grid lines — single overlay pass, not multiplied per row ── */}
+      <g opacity={0.15}>
+        {weeks.map((_, wi) => (
+          <line key={wi} x1={wi*7*DAY_W} y1={HEADER_H} x2={wi*7*DAY_W} y2={totalH} stroke={C.border} strokeWidth={1}/>
+        ))}
+      </g>
 
       {/* ── Bars ── */}
       {rows.map((row, ri) => {

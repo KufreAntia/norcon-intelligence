@@ -102,6 +102,7 @@ export default function L3Dashboard({ state, activities, milestones, risks, deli
 
     // Chart bounds
     const allMs = [...planLine, ...actLine].map(p => new Date(p.date).getTime()).filter(n => !isNaN(n));
+    if (!allMs.length) return <div style={{ fontSize:11, color:C.muted, fontStyle:"italic", padding:8 }}>Set activity dates to display cost curve.</div>;
     const minMs = Math.min(...allMs);
     const maxMs = Math.max(...allMs);
     const span  = Math.max(maxMs - minMs, 30 * 86400000); // min 30-day span
