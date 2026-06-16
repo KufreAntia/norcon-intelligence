@@ -62,7 +62,7 @@ export default function L3Dashboard({ state, activities, milestones, risks, deli
   const costVariance = totalPlanned - totalActual;
   const hasCostData  = totalPlanned > 0 || totalActual > 0;
 
-  // ── Cost chart — both lines anchored to the Gantt timeline ────────────
+  // ── Cost chart — both lines read from costData, anchored to Gantt dates ─
   const renderCostChart = () => {
     if (!hasCostData) return (
       <div style={{ fontSize:11, color:C.muted, fontStyle:"italic", padding:8 }}>
@@ -70,33 +70,27 @@ export default function L3Dashboard({ state, activities, milestones, risks, deli
       </div>
     );
 
-    // Build a lookup: activityId → sum of all expenditure log entries for that activity
-    const actualByActivity = {};
-    expLog.forEach(e => {
-      if (!e.activityId || !e.amount) return;
-      actualByActivity[e.activityId] = (actualByActivity[e.activityId] || 0) + (parseFloat(e.amount) || 0);
-    });
-
-    // All Gantt items with dates — the shared timeline both lines will use
+    // All Gantt items sorted by date — shared timeline for both lines
     const ganttItems = [...activities, ...milestones]
-      .filter(i => i.targetDate || i.startDate)
+      .filter(i => (i.targetDate || i.startDate) && costData[i._id])
       .sort((a, b) => new Date(a.targetDate || a.startDate) - new Date(b.targetDate || b.startDate));
 
-    // Planned line: per-activity planned cost plotted at its Gantt date
+    // Planned line: costData[id].plannedAmount at activity Gantt date
     const datedPlanned = ganttItems
-      .filter(i => costData[i._id]?.plannedAmount)
-      .map(i => ({ date: i.targetDate || i.startDate, v: parseFloat(costData[i._id].plannedAmount) || 0 }));
+      .filter(i => parseFloat(costData[i._id]?.plannedAmount) > 0)
+      .map(i => ({ date: i.targetDate || i.startDate, v: parseFloat(costData[i._id].plannedAmount) }));
 
-    // Actual line: per-activity actual cost (sum of expLog entries by activityId) plotted at its Gantt date
+    // Actual line: costData[id].actualAmount at activity Gantt date
+    // actualAmount is auto-synced from the expenditure log in L3IntegratedBaseline
     const datedActual = ganttItems
-      .filter(i => actualByActivity[i._id] > 0)
-      .map(i => ({ date: i.targetDate || i.startDate, v: actualByActivity[i._id] }));
+      .filter(i => parseFloat(costData[i._id]?.actualAmount) > 0)
+      .map(i => ({ date: i.targetDate || i.startDate, v: parseFloat(costData[i._id].actualAmount) }));
 
     // Cumulative planned
     let cumP = 0;
     const planLine = datedPlanned.map(p => ({ date: p.date, v: (cumP += p.v) }));
 
-    // Cumulative actual — anchored to the same Gantt timeline
+    // Cumulative actual — same Gantt timeline as planned
     let cumA = 0;
     const actLine = datedActual.map(p => ({ date: p.date, v: (cumA += p.v) }));
 

@@ -257,16 +257,40 @@ export default function L3IntegratedBaseline({ state, activities, milestones, me
   };
 
   // ── Expenditure log helpers ────────────────────────────────────────────
+  // Recalculate costData.actualAmount for every activity from the expenditure log
+  const syncActuals = (log, currentCostData) => {
+    const sums = {};
+    log.forEach(e => {
+      if (!e.activityId || !e.amount) return;
+      sums[e.activityId] = (sums[e.activityId] || 0) + (parseFloat(e.amount) || 0);
+    });
+    const next = { ...currentCostData };
+    // Update every activity's actualAmount to match the log sum
+    Object.keys(next).forEach(id => {
+      next[id] = { ...next[id], actualAmount: sums[id] ? String(sums[id]) : "" };
+    });
+    // Also handle any activity id that appears in sums but not yet in costData
+    Object.keys(sums).forEach(id => {
+      if (!next[id]) next[id] = { plannedAmount: "", actualAmount: String(sums[id]) };
+    });
+    return next;
+  };
+
   const addExp = () => {
     if (!newExp.activityId || !newExp.amount) return;
-    const next = [...expLog, { ...newExp, id:`EXP-${String(expLog.length+1).padStart(3,"0")}`, date: newExp.date || toISO(new Date()) }];
-    setExpLog(next);
-    saveSheet03({ expenditureLog: next });
+    const nextLog = [...expLog, { ...newExp, id:`EXP-${String(expLog.length+1).padStart(3,"0")}`, date: newExp.date || toISO(new Date()) }];
+    const nextCost = syncActuals(nextLog, costData);
+    setExpLog(nextLog);
+    setCostData(nextCost);
+    saveSheet03({ expenditureLog: nextLog, costData: nextCost });
     setNewExp({ activityId:"", date:"", amount:"", description:"", invoiceRef:"" });
   };
   const delExp = (i) => {
-    const next = expLog.filter((_, j) => j !== i);
-    setExpLog(next); saveSheet03({ expenditureLog: next });
+    const nextLog = expLog.filter((_, j) => j !== i);
+    const nextCost = syncActuals(nextLog, costData);
+    setExpLog(nextLog);
+    setCostData(nextCost);
+    saveSheet03({ expenditureLog: nextLog, costData: nextCost });
   };
 
   // ── Build flat item list ───────────────────────────────────────────────
