@@ -8,6 +8,7 @@ import L3Report             from "./l3/L3Report.jsx";
 import L3ChangeControl      from "./l3/L3ChangeControl.jsx";
 import CCRPopup             from "./l3/CCRPopup.jsx";
 import L3Sustainability      from "./l3/L3Sustainability.jsx";
+import L3Benefits            from "./l3/L3Benefits.jsx";
 import SustainabilityPrompt  from "./l3/SustainabilityPrompt.jsx";
 import {
   isBaselineField, describeChange, generateCCRId, generateMinorId,
@@ -30,6 +31,7 @@ const TABS = [
   { id:"change",    label:"Change Control",        icon:"🔄" },
   { id:"report",    label:"Report",               icon:"📄" },
   { id:"sustain",   label:"Sustainability",        icon:"🌿" },
+  { id:"benefits",  label:"Benefits & Value",       icon:"🎯" },
 ];
 
 // ── Leave-page save popup ─────────────────────────────────────────────────
@@ -225,7 +227,7 @@ export default function OperatingLayer({ state, member, onGoToL2, onMarkComplete
   }, [onStateChange]);
 
   // ── Tab navigation with leave-page check ─────────────────────────────
-  const TABS_WITH_FORMS = ["baseline", "tasks", "home"];
+  const TABS_WITH_FORMS = ["baseline", "tasks", "home", "benefits"];
   const requestTabChange = (toTab) => {
     if (toTab === activeTab) return;
     if (dirtyRef.current && TABS_WITH_FORMS.includes(activeTab)) {
@@ -316,6 +318,7 @@ export default function OperatingLayer({ state, member, onGoToL2, onMarkComplete
     raci:      L3RACI,
     report:    L3Report,
     change:    null,
+    benefits:  L3Benefits,
   }[activeTab];
 
   const totalTasks = [...activities, ...milestones].length;
