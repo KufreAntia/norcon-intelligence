@@ -6,8 +6,15 @@ const C = {
   risk:"#e05c5c", milestone:"#e0a23a", activity:"#3ae0a2",
 };
 
+function fmtDate(d) {
+  if (!d) return "—";
+  const dt = new Date(d);
+  if (isNaN(dt)) return "—";
+  return dt.toLocaleDateString("en-GB", { day:"2-digit", month:"short", year:"2-digit" });
+}
+
 export default function L3Tasks({ state, activities, milestones, member, raciData, onMarkComplete, sustainConfig, onSustainRecord, setSustainPrompt }) {
-  const [filter,        setFilter]        = useState("all");
+  const [filter, setFilter] = useState("all");
 
   const loginCode = member?.loginCode;
   const raciRows  = [...(raciData?.raciRows || []), ...(raciData?.customRows || [])];
@@ -16,7 +23,7 @@ export default function L3Tasks({ state, activities, milestones, member, raciDat
   const canEdit       = (taskId) => getAssignment(taskId) === "R" || member?.isPM;
   const isMine        = (taskId) => !!getAssignment(taskId);
 
-  // Merge and sort by target date ascending — mirrors planned execution order
+  // Merged and sorted by target date — mirrors planned execution order (same as Gantt)
   const allItems = [
     ...activities.map(a => ({ ...a, itemType:"activity" })),
     ...milestones.map(m => ({ ...m, itemType:"milestone" })),
@@ -24,7 +31,6 @@ export default function L3Tasks({ state, activities, milestones, member, raciDat
     const da = a.targetDate ? new Date(a.targetDate).getTime() : Infinity;
     const db = b.targetDate ? new Date(b.targetDate).getTime() : Infinity;
     if (da !== db) return da - db;
-    // Tie-break: milestone comes after activity on same date
     if (a.itemType !== b.itemType) return a.itemType === "milestone" ? 1 : -1;
     return 0;
   });
@@ -39,15 +45,18 @@ export default function L3Tasks({ state, activities, milestones, member, raciDat
   const doneCount = allItems.filter(a => a._complete).length;
 
   const statusColor = (item) => {
-    if (item._complete)                                              return C.activity;
-    if (item.targetDate && new Date(item.targetDate) < new Date())  return C.risk;
+    if (item._complete)                                             return C.activity;
+    if (item.targetDate && new Date(item.targetDate) < new Date()) return C.risk;
     return C.milestone;
   };
   const statusLabel = (item) => {
-    if (item._complete)                                              return "Complete";
-    if (item.targetDate && new Date(item.targetDate) < new Date())  return "Overdue";
+    if (item._complete)                                             return "Complete";
+    if (item.targetDate && new Date(item.targetDate) < new Date()) return "Overdue";
     return "In Progress";
   };
+
+  // Grid: ID | Task | Phase | Due Date | Status | Action
+  const COLS = "80px 1fr 90px 100px 110px 140px";
 
   return (
     <div style={{ padding:20, overflowY:"auto", height:"100%" }}>
@@ -69,11 +78,13 @@ export default function L3Tasks({ state, activities, milestones, member, raciDat
         </div>
       </div>
 
-      {/* Task table */}
+      {/* Table */}
       <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:8, overflow:"hidden" }}>
-        <div style={{ display:"grid", gridTemplateColumns:"80px 1fr 100px 120px 110px 140px",
+
+        {/* Header */}
+        <div style={{ display:"grid", gridTemplateColumns:COLS,
           gap:8, padding:"8px 14px", background:C.surface2, borderBottom:`1px solid ${C.border}` }}>
-          {["ID","Task","Phase","Owner","Status","Action"].map(h => (
+          {["ID","Task","Phase","Due Date","Status","Action"].map(h => (
             <div key={h} style={{ fontSize:9, fontWeight:700, color:C.muted, textTransform:"uppercase", letterSpacing:".4px" }}>{h}</div>
           ))}
         </div>
@@ -89,37 +100,54 @@ export default function L3Tasks({ state, activities, milestones, member, raciDat
           const col        = statusColor(item);
           const label      = statusLabel(item);
           const isMile     = item.itemType === "milestone";
+          const isOverdue  = !item._complete && item.targetDate && new Date(item.targetDate) < new Date();
 
           return (
             <div key={item._id || i} style={{
-              display:"grid", gridTemplateColumns:"80px 1fr 100px 120px 110px 140px",
+              display:"grid", gridTemplateColumns:COLS,
               gap:8, padding:"9px 14px", borderBottom:`1px solid ${C.border}`,
               background: mine ? "rgba(46,125,82,0.06)" : "transparent",
               borderLeft: mine ? `3px solid ${C.accentL}` : "3px solid transparent",
               alignItems:"center",
             }}>
-              <div style={{ fontFamily:"monospace", fontSize:10, color: isMile ? C.milestone : C.muted }}>{item._id}</div>
+
+              {/* ID */}
+              <div style={{ fontFamily:"monospace", fontSize:10, color: isMile ? C.milestone : C.muted }}>
+                {item._id}
+              </div>
+
+              {/* Task name */}
               <div>
                 <div style={{ fontSize:12, color: item._complete ? C.muted : C.sage, textDecoration: item._complete ? "line-through" : "none" }}>
-                  {item.name || item.description || "—"}
+                  {isMile ? "◆ " : ""}{item.name || item.description || "—"}
                 </div>
                 {mine && assignment && <div style={{ fontSize:9, color:C.accentL, marginTop:1 }}>You ({assignment})</div>}
               </div>
+
+              {/* Phase */}
               <div style={{ fontSize:11, color:C.muted }}>{item.phase || "—"}</div>
-              <div style={{ fontSize:11, color: mine ? C.accentL : C.muted }}>{item.responsible || item._suggestedOwner || "—"}</div>
+
+              {/* Due Date — read-only, sourced from Gantt/Integrated Baseline */}
+              <div style={{ fontSize:11, color: isOverdue ? C.risk : C.dim, fontFamily:"monospace" }}>
+                {fmtDate(item.targetDate)}
+              </div>
+
+              {/* Status */}
               <div>
                 <span style={{ fontSize:9, fontWeight:700, padding:"2px 7px", borderRadius:20,
                   background: col + "22", color: col, border:`1px solid ${col}55` }}>
                   {label}
                 </span>
               </div>
+
+              {/* Action */}
               <div style={{ display:"flex", gap:6, alignItems:"center" }}>
                 {canDo ? (
                   item._complete ? (
                     <button onClick={() => onMarkComplete(item._id, item.itemType, false)}
                       style={{ padding:"4px 10px", background:"rgba(58,224,162,0.15)", border:`1px solid ${C.activity}`,
                         borderRadius:5, color:C.activity, fontSize:10, fontWeight:700, cursor:"pointer", whiteSpace:"nowrap" }}>
-                      ✓ Undo
+                      ↩ Undo
                     </button>
                   ) : (
                     <button onClick={() => {
@@ -142,8 +170,6 @@ export default function L3Tasks({ state, activities, milestones, member, raciDat
           );
         })}
       </div>
-
-
     </div>
   );
 }
