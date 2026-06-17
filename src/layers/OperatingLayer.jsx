@@ -217,12 +217,15 @@ export default function OperatingLayer({ state, member, onGoToL2, onMarkComplete
     else setActiveTab("tasks");
   }, []);
 
-  const handleSustainRecord = useCallback((ev) => {
+  const handleSustainRecord = useCallback((records) => {
+    // records is now an array (one entry per dimension)
+    const arr   = Array.isArray(records) ? records : [records];
+    const dated = arr.map(r => ({ ...r, date: new Date().toLocaleDateString("en-GB") }));
     onStateChange(prev => ({
       ...prev,
       sustainData: {
         ...(prev.sustainData||{}),
-        evidence: [...((prev.sustainData||{}).evidence||[]), { ...ev, date: new Date().toLocaleDateString("en-GB") }],
+        evidence: [...((prev.sustainData||{}).evidence||[]), ...dated],
       },
     }));
   }, [onStateChange]);
