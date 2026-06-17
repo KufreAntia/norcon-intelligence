@@ -1,7 +1,7 @@
 const C = { surface:"#122E1E", surface2:"#183D28", border:"#1F4D34", accent:"#2E7D52", accentL:"#3a9962", sage:"#E5F0E8", dim:"#8aac96", muted:"#5a7a66", risk:"#e05c5c", milestone:"#e0a23a", activity:"#3ae0a2" };
 const RACI_COLORS = { R:C.risk, A:C.milestone, C:"#3a9ce0", I:"#9c6ee0" };
 
-export default function L3RACI({ raciData, teamMembers, member, activities, milestones, onMarkComplete }) {
+export default function L3RACI({ raciData, teamMembers, member, activities, milestones, onMarkComplete, sustainConfig, setSustainPrompt }) {
   const rows    = [...(raciData.raciRows||[]), ...(raciData.customRows||[])];
   const members = teamMembers.filter(m => m.name && m.role);
   const loginCode = member?.loginCode;
@@ -88,7 +88,16 @@ export default function L3RACI({ raciData, teamMembers, member, activities, mile
                       {done ? (
                         <span style={{ fontSize:10, color:C.activity, fontWeight:700 }}>✓ Complete</span>
                       ) : canComplete(row.taskId) ? (
-                        <button onClick={() => onMarkComplete(row.taskId, "activity", true)}
+                        <button onClick={() => {
+                            const sustainEnabled = sustainConfig && Object.values(sustainConfig.enabled || {}).some(Boolean);
+                            if (sustainEnabled && setSustainPrompt) {
+                              // Find the full item so the prompt has name/phase context
+                              const item = [...activities, ...milestones].find(x => x._id === row.taskId);
+                              setSustainPrompt({ ...(item || { _id: row.taskId, name: row.label }), itemType: "activity" });
+                            } else {
+                              onMarkComplete(row.taskId, "activity", true);
+                            }
+                          }}
                           style={{ padding:"3px 9px", background:C.accent, border:"none", borderRadius:4, color:"#fff", fontSize:10, fontWeight:700, cursor:"pointer" }}>
                           ✓ Mark Done
                         </button>

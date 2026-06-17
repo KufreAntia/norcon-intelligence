@@ -1,6 +1,4 @@
 import { useState } from "react";
-import SustainabilityPrompt from "./SustainabilityPrompt.jsx";
-
 const C = {
   surface:"#122E1E", surface2:"#183D28", border:"#1F4D34",
   accent:"#2E7D52", accentL:"#3a9962",
@@ -8,9 +6,8 @@ const C = {
   risk:"#e05c5c", milestone:"#e0a23a", activity:"#3ae0a2",
 };
 
-export default function L3Tasks({ state, activities, milestones, member, raciData, onMarkComplete, sustainConfig, onSustainRecord }) {
+export default function L3Tasks({ state, activities, milestones, member, raciData, onMarkComplete, sustainConfig, onSustainRecord, setSustainPrompt }) {
   const [filter,        setFilter]        = useState("all");
-  const [sustainPrompt, setSustainPrompt] = useState(null);
 
   const loginCode = member?.loginCode;
   const raciRows  = [...(raciData?.raciRows || []), ...(raciData?.customRows || [])];
@@ -138,21 +135,7 @@ export default function L3Tasks({ state, activities, milestones, member, raciDat
         })}
       </div>
 
-      {sustainPrompt && (
-        <SustainabilityPrompt
-          activity={sustainPrompt}
-          sustainConfig={sustainConfig}
-          onRecord={ev => {
-            onSustainRecord?.(ev);
-            onMarkComplete(sustainPrompt._id, sustainPrompt.itemType, true);
-            setSustainPrompt(null);
-          }}
-          onSkip={() => {
-            onMarkComplete(sustainPrompt._id, sustainPrompt.itemType, true);
-            setSustainPrompt(null);
-          }}
-        />
-      )}
+
     </div>
   );
 }

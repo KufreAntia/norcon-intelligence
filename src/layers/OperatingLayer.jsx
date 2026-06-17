@@ -65,7 +65,8 @@ function LeavePopup({ onLogCCR, onMinor, onDiscard, onCancel, tabLabel }) {
 export default function OperatingLayer({ state, member, onGoToL2, onMarkComplete, onStateChange, onLogout }) {
   const [activeTab,    setActiveTab]    = useState("home");
   const [ccrPending,   setCcrPending]   = useState(null);
-  const [notification, setNotification] = useState(null);
+  const [notification,  setNotification]  = useState(null);
+  const [sustainPrompt, setSustainPrompt] = useState(null);
   // Leave-page detection
   const [leavePopup,   setLeavePopup]   = useState(null); // { toTab, dirtyDesc }
   const dirtyRef = useRef(false); // tracks whether current tab has unsaved non-click changes
@@ -307,6 +308,7 @@ export default function OperatingLayer({ state, member, onGoToL2, onMarkComplete
     onMarkComplete, onGoToL2, onStateChange,
     onBaselineBlur: handleBaselineBlur,
     sustainConfig, onSustainRecord: handleSustainRecord,
+    sustainPrompt, setSustainPrompt,
     onSetDirty: setDirty, onClearDirty: clearDirty,
   };
 
@@ -462,13 +464,22 @@ export default function OperatingLayer({ state, member, onGoToL2, onMarkComplete
           onCancel={()=>setLeavePopup(null)}/>
       )}
 
-      {/* Sustainability micro-prompt */}
-      {sharedProps.sustainPrompt && (
+      {/* Sustainability micro-prompt — triggered from Tasks or RACI */}
+      {sustainPrompt && (
         <SustainabilityPrompt
-          activity={sharedProps.sustainPrompt}
+          activity={sustainPrompt}
           config={sustainConfig}
-          onRecord={handleSustainRecord}
-          onClose={()=>{}}/>
+          onRecord={(ev) => {
+            handleSustainRecord(ev);
+            onMarkComplete(sustainPrompt._id, sustainPrompt.itemType || "activity", true);
+            setSustainPrompt(null);
+          }}
+          onSkip={() => {
+            onMarkComplete(sustainPrompt._id, sustainPrompt.itemType || "activity", true);
+            setSustainPrompt(null);
+          }}
+          onClose={() => setSustainPrompt(null)}
+        />
       )}
     </div>
   );
