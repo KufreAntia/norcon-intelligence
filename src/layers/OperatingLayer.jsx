@@ -471,11 +471,11 @@ export default function OperatingLayer({ state, member, onGoToL2, onMarkComplete
           sustainConfig={sustainConfig}
           onRecord={(ev) => {
             handleSustainRecord(ev);
-            onMarkComplete(sustainPrompt._id, sustainPrompt.itemType || "activity", true);
+            onMarkComplete(sustainPrompt._id, sustainPrompt.itemType, true);
             setSustainPrompt(null);
           }}
           onSkip={() => {
-            onMarkComplete(sustainPrompt._id, sustainPrompt.itemType || "activity", true);
+            onMarkComplete(sustainPrompt._id, sustainPrompt.itemType, true);
             setSustainPrompt(null);
           }}
           onClose={() => setSustainPrompt(null)}

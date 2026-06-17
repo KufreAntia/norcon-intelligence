@@ -18,12 +18,15 @@ export default function L3RACI({ raciData, teamMembers, member, activities, mile
   };
 
   const handleMarkDone = (taskId) => {
+    const act   = activities.find(x => x._id === taskId);
+    const mile  = milestones.find(x => x._id === taskId);
+    const item  = act || mile;
+    const itype = act ? "activity" : "milestone";
     const sustainEnabled = sustainConfig && Object.values(sustainConfig.enabled || {}).some(Boolean);
     if (sustainEnabled && setSustainPrompt) {
-      const item = [...activities, ...milestones].find(x => x._id === taskId);
-      setSustainPrompt({ ...(item || { _id: taskId }), itemType: "activity" });
+      setSustainPrompt({ ...(item || { _id: taskId, name: row?.label || taskId }), itemType: itype });
     } else {
-      onMarkComplete(taskId, "activity", true);
+      onMarkComplete(taskId, itype, true);
     }
   };
 
@@ -94,7 +97,10 @@ export default function L3RACI({ raciData, teamMembers, member, activities, mile
                     })}
                     <td style={{ padding:"5px 10px", textAlign:"center" }}>
                       {done ? (
-                        <button onClick={() => onMarkComplete(row.taskId, "activity", false)}
+                        <button onClick={() => {
+                          const isAct = !!activities.find(x => x._id === row.taskId);
+                          onMarkComplete(row.taskId, isAct ? "activity" : "milestone", false);
+                        }}
                           style={{ padding:"3px 9px", background:"rgba(58,224,162,0.12)", border:`1px solid ${C.activity}`, borderRadius:4, color:C.activity, fontSize:10, fontWeight:700, cursor:"pointer" }}>
                           ↩ Undo
                         </button>
