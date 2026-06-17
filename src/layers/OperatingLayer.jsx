@@ -468,7 +468,7 @@ export default function OperatingLayer({ state, member, onGoToL2, onMarkComplete
       {sustainPrompt && (
         <SustainabilityPrompt
           activity={sustainPrompt}
-          config={sustainConfig}
+          sustainConfig={sustainConfig}
           onRecord={(ev) => {
             handleSustainRecord(ev);
             onMarkComplete(sustainPrompt._id, sustainPrompt.itemType || "activity", true);

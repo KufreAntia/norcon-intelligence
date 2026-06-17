@@ -2,11 +2,10 @@ const C = { surface:"#122E1E", surface2:"#183D28", border:"#1F4D34", accent:"#2E
 const RACI_COLORS = { R:C.risk, A:C.milestone, C:"#3a9ce0", I:"#9c6ee0" };
 
 export default function L3RACI({ raciData, teamMembers, member, activities, milestones, onMarkComplete, sustainConfig, setSustainPrompt }) {
-  const rows    = [...(raciData.raciRows||[]), ...(raciData.customRows||[])];
-  const members = teamMembers.filter(m => m.name && m.role);
+  const rows      = [...(raciData.raciRows||[]), ...(raciData.customRows||[])];
+  const members   = teamMembers.filter(m => m.name && m.role);
   const loginCode = member?.loginCode;
 
-  // Get completion from activities/milestones
   const isComplete = (taskId) => {
     const a = activities.find(x => x._id === taskId);
     const m = milestones.find(x => x._id === taskId);
@@ -15,8 +14,17 @@ export default function L3RACI({ raciData, teamMembers, member, activities, mile
 
   const canComplete = (taskId) => {
     const row = rows.find(r => r.taskId === taskId);
-    const assignment = row?.assignments?.[loginCode];
-    return assignment === 'R' || member?.isPM;
+    return row?.assignments?.[loginCode] === "R" || member?.isPM;
+  };
+
+  const handleMarkDone = (taskId) => {
+    const sustainEnabled = sustainConfig && Object.values(sustainConfig.enabled || {}).some(Boolean);
+    if (sustainEnabled && setSustainPrompt) {
+      const item = [...activities, ...milestones].find(x => x._id === taskId);
+      setSustainPrompt({ ...(item || { _id: taskId }), itemType: "activity" });
+    } else {
+      onMarkComplete(taskId, "activity", true);
+    }
   };
 
   return (
@@ -54,7 +62,7 @@ export default function L3RACI({ raciData, teamMembers, member, activities, mile
                     <div style={{ fontSize:8, fontWeight:400 }}>{(m.name||"").split(" ")[0]}</div>
                   </th>
                 ))}
-                <th style={{ padding:"8px 10px", textAlign:"center", fontSize:9, fontWeight:700, color:C.muted, textTransform:"uppercase", letterSpacing:".4px", borderBottom:`1px solid ${C.border}`, minWidth:100 }}>Status</th>
+                <th style={{ padding:"8px 10px", textAlign:"center", fontSize:9, fontWeight:700, color:C.muted, textTransform:"uppercase", letterSpacing:".4px", borderBottom:`1px solid ${C.border}`, minWidth:110 }}>Action</th>
               </tr>
             </thead>
             <tbody>
@@ -77,7 +85,7 @@ export default function L3RACI({ raciData, teamMembers, member, activities, mile
                       return (
                         <td key={m.loginCode} style={{ padding:"5px 8px", textAlign:"center" }}>
                           {val ? (
-                            <div style={{ display:"inline-flex", width:24, height:24, borderRadius:4, alignItems:"center", justifyContent:"center", background:col+"22", border:`1px solid ${col}`, fontSize:10, fontWeight:700, color:col }}>
+                            <div style={{ display:"inline-flex", width:24, height:24, borderRadius:4, alignItems:"center", justifyContent:"center", background:col+"22", border:`1px solid ${col}`, fontSize:10, fontWeight:700, color: done ? C.activity : col }}>
                               {done ? "✓" : val}
                             </div>
                           ) : <span style={{ color:C.border }}>—</span>}
@@ -86,18 +94,12 @@ export default function L3RACI({ raciData, teamMembers, member, activities, mile
                     })}
                     <td style={{ padding:"5px 10px", textAlign:"center" }}>
                       {done ? (
-                        <span style={{ fontSize:10, color:C.activity, fontWeight:700 }}>✓ Complete</span>
+                        <button onClick={() => onMarkComplete(row.taskId, "activity", false)}
+                          style={{ padding:"3px 9px", background:"rgba(58,224,162,0.12)", border:`1px solid ${C.activity}`, borderRadius:4, color:C.activity, fontSize:10, fontWeight:700, cursor:"pointer" }}>
+                          ↩ Undo
+                        </button>
                       ) : canComplete(row.taskId) ? (
-                        <button onClick={() => {
-                            const sustainEnabled = sustainConfig && Object.values(sustainConfig.enabled || {}).some(Boolean);
-                            if (sustainEnabled && setSustainPrompt) {
-                              // Find the full item so the prompt has name/phase context
-                              const item = [...activities, ...milestones].find(x => x._id === row.taskId);
-                              setSustainPrompt({ ...(item || { _id: row.taskId, name: row.label }), itemType: "activity" });
-                            } else {
-                              onMarkComplete(row.taskId, "activity", true);
-                            }
-                          }}
+                        <button onClick={() => handleMarkDone(row.taskId)}
                           style={{ padding:"3px 9px", background:C.accent, border:"none", borderRadius:4, color:"#fff", fontSize:10, fontWeight:700, cursor:"pointer" }}>
                           ✓ Mark Done
                         </button>

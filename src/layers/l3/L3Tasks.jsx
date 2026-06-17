@@ -16,10 +16,18 @@ export default function L3Tasks({ state, activities, milestones, member, raciDat
   const canEdit       = (taskId) => getAssignment(taskId) === "R" || member?.isPM;
   const isMine        = (taskId) => !!getAssignment(taskId);
 
+  // Merge and sort by target date ascending — mirrors planned execution order
   const allItems = [
     ...activities.map(a => ({ ...a, itemType:"activity" })),
     ...milestones.map(m => ({ ...m, itemType:"milestone" })),
-  ];
+  ].sort((a, b) => {
+    const da = a.targetDate ? new Date(a.targetDate).getTime() : Infinity;
+    const db = b.targetDate ? new Date(b.targetDate).getTime() : Infinity;
+    if (da !== db) return da - db;
+    // Tie-break: milestone comes after activity on same date
+    if (a.itemType !== b.itemType) return a.itemType === "milestone" ? 1 : -1;
+    return 0;
+  });
 
   const filtered = allItems.filter(item => {
     if (filter === "mine")       return isMine(item._id);
