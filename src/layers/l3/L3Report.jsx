@@ -1,647 +1,462 @@
 import { useState } from "react";
 import * as XLSX from "xlsx";
 
-const C = { surface:"#122E1E", surface2:"#183D28", border:"#1F4D34", accent:"#2E7D52", accentL:"#3a9962", sage:"#E5F0E8", sageDim:"#b8d4c0", dim:"#8aac96", muted:"#5a7a66", risk:"#e05c5c", milestone:"#e0a23a", activity:"#3ae0a2" };
+const C = { surface:"#122E1E", surface2:"#183D28", border:"#1F4D34", accent:"#2E7D52", accentL:"#3a9962", sage:"#E5F0E8", dim:"#8aac96", muted:"#5a7a66", risk:"#e05c5c", milestone:"#e0a23a", activity:"#3ae0a2" };
 
 // ── Excel style helpers ────────────────────────────────────────────────────────
-const HDR_STYLE    = { fill:{fgColor:{rgb:"0D2B1B"},patternType:"solid"}, font:{color:{rgb:"E5F0E8"},bold:true,sz:11}, alignment:{horizontal:"left",vertical:"center",wrapText:true}, border:{bottom:{style:"thin",color:{rgb:"2E7D52"}}} };
-const SUB_HDR_STYLE= { fill:{fgColor:{rgb:"122E1E"},patternType:"solid"}, font:{color:{rgb:"3a9962"},bold:true,sz:10}, alignment:{horizontal:"left",vertical:"center"} };
-const ALT_STYLE    = { fill:{fgColor:{rgb:"183D28"},patternType:"solid"}, font:{color:{rgb:"b8d4c0"},sz:10}, alignment:{wrapText:true,vertical:"top"} };
-const NORMAL_STYLE = { fill:{fgColor:{rgb:"122E1E"},patternType:"solid"}, font:{color:{rgb:"E5F0E8"},sz:10}, alignment:{wrapText:true,vertical:"top"} };
-const RAG_RED      = { fill:{fgColor:{rgb:"2a1515"},patternType:"solid"}, font:{color:{rgb:"e05c5c"},bold:true,sz:10} };
-const RAG_AMBER    = { fill:{fgColor:{rgb:"2a2010"},patternType:"solid"}, font:{color:{rgb:"e0a23a"},bold:true,sz:10} };
-const RAG_GREEN    = { fill:{fgColor:{rgb:"102a20"},patternType:"solid"}, font:{color:{rgb:"3ae0a2"},bold:true,sz:10} };
-const DONE_STYLE   = { fill:{fgColor:{rgb:"102a20"},patternType:"solid"}, font:{color:{rgb:"3ae0a2"},sz:10} };
+const HDR    = { fill:{fgColor:{rgb:"0D2B1B"},patternType:"solid"}, font:{color:{rgb:"E5F0E8"},bold:true,sz:11}, alignment:{horizontal:"left",vertical:"center",wrapText:true}, border:{bottom:{style:"thin",color:{rgb:"2E7D52"}}} };
+const ALT    = { fill:{fgColor:{rgb:"183D28"},patternType:"solid"}, font:{color:{rgb:"b8d4c0"},sz:10}, alignment:{wrapText:true,vertical:"top"} };
+const NRM    = { fill:{fgColor:{rgb:"122E1E"},patternType:"solid"}, font:{color:{rgb:"E5F0E8"},sz:10}, alignment:{wrapText:true,vertical:"top"} };
+const SUB    = { fill:{fgColor:{rgb:"122E1E"},patternType:"solid"}, font:{color:{rgb:"3a9962"},bold:true,sz:10}, alignment:{horizontal:"left"} };
+const R_RED  = { fill:{fgColor:{rgb:"2a1515"},patternType:"solid"}, font:{color:{rgb:"e05c5c"},bold:true,sz:10} };
+const R_AMB  = { fill:{fgColor:{rgb:"2a2010"},patternType:"solid"}, font:{color:{rgb:"e0a23a"},bold:true,sz:10} };
+const R_GRN  = { fill:{fgColor:{rgb:"102a20"},patternType:"solid"}, font:{color:{rgb:"3ae0a2"},bold:true,sz:10} };
+const DONE   = { fill:{fgColor:{rgb:"102a20"},patternType:"solid"}, font:{color:{rgb:"3ae0a2"},sz:10} };
+const CC_BLUE= { fill:{fgColor:{rgb:"102030"},patternType:"solid"}, font:{color:{rgb:"3a9ce0"},bold:false,sz:10} };
+const CC_PURP= { fill:{fgColor:{rgb:"1e1030"},patternType:"solid"}, font:{color:{rgb:"9c6ee0"},bold:false,sz:10} };
+function ragS(l,i){ const s=(parseInt(l)||1)*(parseInt(i)||1); return s>=9?R_RED:s>=4?R_AMB:R_GRN; }
 
-function ragStyle(l, i) { const s=(parseInt(l)||1)*(parseInt(i)||1); return s>=9?RAG_RED:s>=4?RAG_AMBER:RAG_GREEN; }
-
-function buildSheet(headers, rows, colWidths, ragColFn) {
+function buildSheet(headers, rows, widths, styleFn) {
   const ws = {};
-  headers.forEach((h,c) => { ws[XLSX.utils.encode_cell({r:0,c})] = {v:h,t:"s",s:HDR_STYLE}; });
-  rows.forEach((row,ri) => {
-    const style = ri%2===0 ? NORMAL_STYLE : ALT_STYLE;
-    row.forEach((val,c) => {
+  headers.forEach((h,c)=>{ ws[XLSX.utils.encode_cell({r:0,c})]={v:h,t:"s",s:HDR}; });
+  rows.forEach((row,ri)=>{
+    const base = ri%2===0?NRM:ALT;
+    row.forEach((val,c)=>{
       const addr = XLSX.utils.encode_cell({r:ri+1,c});
-      const cellStyle = ragColFn ? ragColFn(ri,c,val,row)||style : style;
-      ws[addr] = {v:val==null?"":String(val),t:"s",s:cellStyle};
+      ws[addr] = {v:val==null?"":String(val),t:"s",s:styleFn?styleFn(ri,c,val,row)||base:base};
     });
   });
-  ws["!cols"]   = colWidths.map(w => ({wch:w}));
+  ws["!cols"]   = widths.map(w=>({wch:w}));
   ws["!ref"]    = XLSX.utils.encode_range({s:{r:0,c:0},e:{r:rows.length,c:headers.length-1}});
   ws["!freeze"] = {xSplit:0,ySplit:1};
   return ws;
 }
 
-// ── Build the full project context for AI calls ───────────────────────────────
 function buildProjectContext(state, project, charter, activities, milestones, risks, deliverables, stakeholders, teamMembers) {
-  const sheets   = state?.l2?.sheets || {};
-  const changes  = sheets["06"]?.data?.changes  || [];
-  const issues   = sheets["05"]?.data?.issues   || [];
-  const sustain  = state?.sustainData?.evidence || [];
-  const baseline = state?.baseline;
-  const benefits = charter?.benefits || [];
+  const sheets  = state?.l2?.sheets || {};
+  const changes = sheets["06"]?.data?.changes  || [];
+  const issues  = sheets["05"]?.data?.issues   || [];
+  const sustain = state?.sustainData?.evidence || [];
+  const baseline= state?.baseline;
+  const benefits= charter?.benefits || [];
+  const dels    = sheets["07"]?.data?.deliverables || deliverables;
 
-  const doneTasks   = [...activities,...milestones].filter(a=>a._complete).length;
-  const totalTasks  = activities.length + milestones.length;
-  const pct         = totalTasks > 0 ? Math.round((doneTasks/totalTasks)*100) : 0;
-  const redRisks    = risks.filter(r=>(parseInt(r.likelihood)||1)*(parseInt(r.impact)||1)>=9).length;
-  const ambRisks    = risks.filter(r=>{const s=(parseInt(r.likelihood)||1)*(parseInt(r.impact)||1);return s>=4&&s<9;}).length;
-  const openIssues  = issues.filter(i=>i.status!=="Resolved").length;
-  const nextMs      = milestones.filter(m=>!m._complete&&m.targetDate).sort((a,b)=>new Date(a.targetDate)-new Date(b.targetDate))[0];
-  const overdueActs = activities.filter(a=>!a._complete&&a.targetDate&&new Date(a.targetDate)<new Date()).length;
+  const done    = [...activities,...milestones].filter(a=>a._complete).length;
+  const total   = activities.length + milestones.length;
+  const pct     = total>0?Math.round((done/total)*100):0;
+  const red     = risks.filter(r=>(parseInt(r.likelihood)||1)*(parseInt(r.impact)||1)>=9).length;
+  const amb     = risks.filter(r=>{const s=(parseInt(r.likelihood)||1)*(parseInt(r.impact)||1);return s>=4&&s<9;}).length;
+  const nextMs  = milestones.filter(m=>!m._complete&&m.targetDate).sort((a,b)=>new Date(a.targetDate)-new Date(b.targetDate))[0];
+  const overdue = activities.filter(a=>!a._complete&&a.targetDate&&new Date(a.targetDate)<new Date()).length;
 
-  // Benefits Realisation Index
-  const delsFromState = sheets["07"]?.data?.deliverables || deliverables;
-  const briData = benefits.map(b => {
+  const briData = benefits.map(b=>{
     const objIds = (b.objectives||[]).map(o=>o._id);
-    const linked = delsFromState.filter(d=>objIds.includes(d.linkedObjectiveId));
-    const kpis   = linked.flatMap(d=>d.kpis||[]).filter(k=>k.target&&k.actual!==undefined&&k.actual!=="");
-    const bri    = kpis.length > 0 ? Math.round(kpis.reduce((s,k)=>s+Math.min(100,(parseFloat(k.actual)/parseFloat(k.target))*100),0)/kpis.length) : null;
-    return { name: b.name, bri, kpiCount: kpis.length };
+    const linked = dels.filter(d=>objIds.includes(d.linkedObjectiveId));
+    const kpis   = linked.flatMap(d=>d.kpis||[]).filter(k=>k.target&&k.actual!=null&&k.actual!=="");
+    const bri    = kpis.length>0?Math.round(kpis.reduce((s,k)=>s+Math.min(100,(parseFloat(k.actual)/parseFloat(k.target))*100),0)/kpis.length):null;
+    return {name:b.name,bri,kpiCount:kpis.length};
   });
 
-  // Sustainability score
-  const sustainScore = sustain.length > 0
-    ? Math.round((sustain.reduce((s,e)=>s+(e.score||0),0)/sustain.length)*100)
-    : null;
+  const sustainScore = sustain.length>0?Math.round((sustain.reduce((s,e)=>s+(e.score||0),0)/sustain.length)*100):null;
 
   return {
-    project: { name:charter?.projectName||project?.name, code:charter?.projectCode||project?.code, manager:charter?.projectManager, sponsor:charter?.projectSponsor, start:charter?.startDate, end:charter?.endDate, budget:charter?.budget, purpose:charter?.purpose, problem:charter?.problemStatement, strategic:charter?.strategicAlignment },
-    progress: { pct, doneTasks, totalTasks, overdueActs },
-    baseline: baseline ? { confirmedDate:baseline.confirmedDate, version:baseline.version } : null,
-    risks: { total:risks.length, red:redRisks, amber:ambRisks, green:risks.length-redRisks-ambRisks, top:risks.slice(0,3).map(r=>({name:r.name,score:(parseInt(r.likelihood)||1)*(parseInt(r.impact)||1),response:r.response})) },
-    issues: { total:issues.length, open:openIssues, escalated:issues.filter(i=>i.status==="Escalated").length },
-    milestones: { total:milestones.length, complete:milestones.filter(m=>m._complete).length, next:nextMs?{name:nextMs.name,date:nextMs.targetDate}:null, overdue:milestones.filter(m=>!m._complete&&m.targetDate&&new Date(m.targetDate)<new Date()).length },
-    changes: { total:changes.length, approved:changes.filter(c=>c.status==="approved").length, pending:changes.filter(c=>c.status==="pending"||c.status==="reviewed").length },
-    benefits: briData,
-    sustainability: { score:sustainScore, evidenceCount:sustain.length },
-    stakeholders: stakeholders.length,
-    team: teamMembers.length,
-    lessonsLearned: benefits.filter(b=>b.lessonsLearned).map(b=>({benefit:b.name,lessons:b.lessonsLearned})),
+    project:{name:charter?.projectName||project?.name,code:charter?.projectCode||project?.code,manager:charter?.projectManager,sponsor:charter?.projectSponsor,start:charter?.startDate,end:charter?.endDate,budget:charter?.budget,purpose:charter?.purpose,problem:charter?.problemStatement,strategic:charter?.strategicAlignment},
+    progress:{pct,done,total,overdue},
+    baseline:baseline?{confirmedDate:baseline.confirmedDate,version:baseline.version}:null,
+    risks:{total:risks.length,red,amber:amb,green:risks.length-red-amb,top:risks.filter(r=>(parseInt(r.likelihood)||1)*(parseInt(r.impact)||1)>=4).slice(0,5).map(r=>({name:r.name,score:(parseInt(r.likelihood)||1)*(parseInt(r.impact)||1),response:r.response,owner:r._suggestedOwner}))},
+    issues:{total:issues.length,open:issues.filter(i=>i.status!=="Resolved").length,escalated:issues.filter(i=>i.status==="Escalated").length},
+    milestones:{total:milestones.length,complete:milestones.filter(m=>m._complete).length,next:nextMs?{name:nextMs.name,date:nextMs.targetDate}:null,overdue:milestones.filter(m=>!m._complete&&m.targetDate&&new Date(m.targetDate)<new Date()).length},
+    changes:{total:changes.length,approved:changes.filter(c=>c.status==="approved").length,pending:changes.filter(c=>c.status==="pending"||c.status==="reviewed").length},
+    benefits:briData,
+    sustainability:{score:sustainScore,evidenceCount:sustain.length},
+    stakeholders:stakeholders.length,
+    team:teamMembers.length,
+    lessonsLearned:benefits.filter(b=>b.lessonsLearned).map(b=>({benefit:b.name,lessons:b.lessonsLearned})),
   };
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Section card component
+// ─────────────────────────────────────────────────────────────────────────────
+function SectionCard({ title, icon, children }) {
+  return (
+    <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:9, padding:"20px 24px", marginBottom:16 }}>
+      <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:16, paddingBottom:10, borderBottom:`1px solid ${C.border}` }}>
+        <span style={{ fontSize:16 }}>{icon}</span>
+        <span style={{ fontSize:14, fontWeight:700, color:C.sage }}>{title}</span>
+      </div>
+      {children}
+    </div>
+  );
+}
+
 export default function L3Report({ state, project, charter, activities, milestones, risks, deliverables, stakeholders, teamMembers, raciData, member, baseline, currentPlan }) {
-  const [tab,          setTab]          = useState("workbook");
-  const [generating,   setGenerating]   = useState(false);
+  const [genState,     setGenState]     = useState("idle"); // idle | workbook | report
   const [genStep,      setGenStep]      = useState("");
   const [aiSummary,    setAiSummary]    = useState("");
-  const [reportStatus, setReportStatus] = useState("");
-  const [reportReady,  setReportReady]  = useState(false);
+  const [reportMsg,    setReportMsg]    = useState("");
 
   const sheets  = state?.l2?.sheets || {};
-  const changes = sheets["06"]?.data?.changes || [];
-  const issues  = sheets["05"]?.data?.issues  || [];
-  const sustain = state?.sustainData?.evidence || [];
+  const changes = (sheets["06"]?.data?.changes||[]);
+  const issues  = (sheets["05"]?.data?.issues||[]);
+  const sustain = state?.sustainData?.evidence||[];
+  const benefits= charter?.benefits||[];
 
-  const doneTasks   = [...activities,...milestones].filter(a=>a._complete).length;
-  const totalTasks  = activities.length + milestones.length;
-  const pct         = totalTasks > 0 ? Math.round((doneTasks/totalTasks)*100) : 0;
-  const redRisks    = risks.filter(r=>(parseInt(r.likelihood)||1)*(parseInt(r.impact)||1)>=9).length;
-  const ambRisks    = risks.filter(r=>{const s=(parseInt(r.likelihood)||1)*(parseInt(r.impact)||1);return s>=4&&s<9;}).length;
-  const nextMs      = milestones.filter(m=>!m._complete&&m.targetDate).sort((a,b)=>new Date(a.targetDate)-new Date(b.targetDate))[0];
+  const done    = [...activities,...milestones].filter(a=>a._complete).length;
+  const total   = activities.length + milestones.length;
+  const pct     = total>0?Math.round((done/total)*100):0;
+  const red     = risks.filter(r=>(parseInt(r.likelihood)||1)*(parseInt(r.impact)||1)>=9).length;
+  const amb     = risks.filter(r=>{const s=(parseInt(r.likelihood)||1)*(parseInt(r.impact)||1);return s>=4&&s<9;}).length;
+  const openIss = issues.filter(i=>i.status!=="Resolved").length;
+  const nextMs  = milestones.filter(m=>!m._complete&&m.targetDate).sort((a,b)=>new Date(a.targetDate)-new Date(b.targetDate))[0];
+  const dels    = sheets["07"]?.data?.deliverables||deliverables;
 
-  // ── Generate Excel Workbook ───────────────────────────────────────────────
+  // ── Workbook generation ───────────────────────────────────────────────────
   const generateWorkbook = async () => {
-    setGenerating(true);
-    setGenStep("Generating AI executive summary...");
-    setAiSummary("");
+    setGenState("workbook"); setGenStep("Generating AI executive summary..."); setAiSummary("");
+    const ctx = buildProjectContext(state,project,charter,activities,milestones,risks,deliverables,stakeholders,teamMembers);
+    const prompt = `Write a professional Executive Summary (300-400 words) for this project. Sections: Project Overview, Progress Update, Key Risks & Issues, Benefits Realisation, Upcoming Milestones, Recommendations. Be direct and factual.
 
-    const ctx = buildProjectContext(state, project, charter, activities, milestones, risks, deliverables, stakeholders, teamMembers);
-
-    const summaryPrompt = `You are generating an Executive Summary for a project workbook. Write a professional, concise narrative (300-400 words) for the following project. Use plain English suitable for a Project Sponsor. Structure it with these sections: Project Overview, Progress Update, Key Risks & Issues, Benefits Realisation, Upcoming Milestones, Recommendations.
-
-PROJECT: ${ctx.project.name||"Unknown"}
-PURPOSE: ${ctx.project.purpose||"Not specified"}
-PM: ${ctx.project.manager||"—"} | SPONSOR: ${ctx.project.sponsor||"—"}
-DATES: ${ctx.project.start||"TBC"} to ${ctx.project.end||"TBC"} | BUDGET: ${ctx.project.budget||"Not specified"}
-
-PROGRESS: ${ctx.progress.pct}% complete (${ctx.progress.doneTasks} of ${ctx.progress.totalTasks} tasks). ${ctx.progress.overdueActs} tasks overdue.
-${ctx.baseline ? `BASELINE: Confirmed ${ctx.baseline.confirmedDate} (v${ctx.baseline.version})` : "BASELINE: Not yet confirmed"}
-
-RISKS: ${ctx.risks.total} total — ${ctx.risks.red} RED, ${ctx.risks.amber} AMBER, ${ctx.risks.green} GREEN
-ISSUES: ${ctx.issues.open} open issues (${ctx.issues.escalated} escalated)
-Top risks: ${ctx.risks.top.map(r=>`${r.name} (score ${r.score})`).join("; ")||"None"}
-
-BENEFITS: ${ctx.benefits.map(b=>b.bri!==null?`${b.name}: BRI ${b.bri}%`:`${b.name}: no data yet`).join("; ")||"None defined"}
-
-MILESTONES: ${ctx.milestones.complete}/${ctx.milestones.total} complete. Next: ${ctx.milestones.next?`${ctx.milestones.next.name} (${ctx.milestones.next.date})`:"None scheduled"}
-
-CHANGE CONTROL: ${ctx.changes.total} changes — ${ctx.changes.approved} approved, ${ctx.changes.pending} pending
-
-Write the summary now. Be direct and factual. Flag red items clearly.`;
-
-    let summary = "Executive summary could not be generated automatically.";
+PROJECT: ${ctx.project.name||"Unknown"} | PM: ${ctx.project.manager||"—"} | SPONSOR: ${ctx.project.sponsor||"—"}
+DATES: ${ctx.project.start||"TBC"} to ${ctx.project.end||"TBC"} | BUDGET: ${ctx.project.budget||"—"}
+PROGRESS: ${ctx.progress.pct}% (${ctx.progress.done}/${ctx.progress.total} tasks). Overdue: ${ctx.progress.overdue}.
+BASELINE: ${ctx.baseline?`Confirmed ${ctx.baseline.confirmedDate}`:"Not confirmed"}
+RISKS: ${ctx.risks.red} RED, ${ctx.risks.amb} AMBER, ${ctx.risks.green} GREEN. Issues: ${ctx.issues.open} open.
+BENEFITS: ${ctx.benefits.map(b=>b.bri!==null?`${b.name} BRI:${b.bri}%`:`${b.name} no data`).join("; ")||"None"}
+MILESTONES: ${ctx.milestones.complete}/${ctx.milestones.total}. Next: ${ctx.milestones.next?`${ctx.milestones.next.name} ${ctx.milestones.next.date}`:"None"}.
+CHANGES: ${ctx.changes.approved} approved, ${ctx.changes.pending} pending.`;
+    let summary = "Executive summary unavailable.";
     try {
-      const res  = await fetch("/api/extract", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({ model:"claude-sonnet-4-6", max_tokens:1000, messages:[{role:"user",content:summaryPrompt}] }) });
-      const data = await res.json();
-      summary    = (data.content||[]).map(b=>b.text||"").join("").trim();
+      const r = await fetch("/api/extract",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({model:"claude-sonnet-4-6",max_tokens:1000,messages:[{role:"user",content:prompt}]})});
+      const d = await r.json();
+      summary = (d.content||[]).map(b=>b.text||"").join("").trim();
       setAiSummary(summary);
-    } catch(e) {
-      setGenStep("AI summary failed — generating workbook without summary.");
-    }
-
+    } catch {}
     setGenStep("Building workbook...");
     await buildWorkbook(summary);
-    setGenerating(false);
-    setGenStep("");
+    setGenState("idle"); setGenStep("");
   };
 
   const buildWorkbook = async (summary) => {
     const wb = XLSX.utils.book_new();
-    const c  = charter || {};
-    const delsFromState = sheets["07"]?.data?.deliverables || deliverables;
-    const benefits = c.benefits || [];
+    const c  = charter||{};
 
-    // ── 00 Executive Summary ──────────────────────────────────────────
-    const s00 = {};
-    [[`${c.projectName||project?.name||"Project"} — Executive Summary`],[`Generated: ${new Date().toLocaleString()}`],[`PM: ${c.projectManager||"—"}  |  Sponsor: ${c.projectSponsor||"—"}  |  Progress: ${pct}% Complete`],[""],
+    // 00 Executive Summary
+    const s00={};
+    [[`${c.projectName||project?.name||"Project"} — Executive Summary`],
+     [`Generated: ${new Date().toLocaleString()}`],
+     [`PM: ${c.projectManager||"—"}  |  Sponsor: ${c.projectSponsor||"—"}  |  Progress: ${pct}%`],
+     [""],
      [summary]].forEach((row,ri)=>{
       row.forEach((val,ci)=>{
-        const addr = XLSX.utils.encode_cell({r:ri,c:ci});
-        s00[addr]  = {v:val,t:"s",s:ri===0?HDR_STYLE:ri===2?SUB_HDR_STYLE:NORMAL_STYLE};
+        const addr=XLSX.utils.encode_cell({r:ri,c:ci});
+        s00[addr]={v:val,t:"s",s:ri===0?HDR:ri===2?SUB:NRM};
       });
     });
-    s00["!cols"]   = [{wch:120}];
-    s00["!merges"] = [{s:{r:0,c:0},e:{r:0,c:3}},{s:{r:4,c:0},e:{r:4,c:3}}];
-    s00["!ref"]    = XLSX.utils.encode_range({s:{r:0,c:0},e:{r:5,c:3}});
-    XLSX.utils.book_append_sheet(wb, s00, "00 Executive Summary");
+    s00["!cols"]=[{wch:120}];
+    s00["!merges"]=[{s:{r:0,c:0},e:{r:0,c:3}},{s:{r:4,c:0},e:{r:4,c:3}}];
+    s00["!ref"]=XLSX.utils.encode_range({s:{r:0,c:0},e:{r:5,c:3}});
+    XLSX.utils.book_append_sheet(wb,s00,"00 Executive Summary");
 
-    // ── 01 Charter (with Benefits & Objectives) ───────────────────────
-    const charterRows = [
-      ["Project Name",       c.projectName||""],
-      ["Project Code",       c.projectCode||""],
-      ["Project Manager",    c.projectManager||""],
-      ["Project Sponsor",    c.projectSponsor||""],
-      ["Organisation",       c.organisation||""],
-      ["Start Date",         c.startDate||""],
-      ["End Date",           c.endDate||""],
-      ["Budget",             c.budget||""],
-      ["Purpose",            c.purpose||""],
-      ["Problem Statement",  c.problemStatement||""],
-      ["Strategic Alignment",c.strategicAlignment||""],
-      ["Within Scope",       (c.withinScope||[]).join("; ")],
-      ["Out of Scope",       (c.outOfScope||[]).join("; ")],
-    ];
-    // Add benefits + objectives
-    benefits.forEach((b,bi) => {
-      charterRows.push(["", ""]);
-      charterRows.push([`BENEFIT ${b._id}`, b.name||""]);
-      charterRows.push(["  Category", b.category||""]);
-      charterRows.push(["  Owner", b.owner||""]);
-      charterRows.push(["  Description", b.description||""]);
-      charterRows.push(["  Target Date", b.targetDate||""]);
-      (b.objectives||[]).forEach((o,oi) => {
-        charterRows.push([`  Objective ${o._id}`, o.objective||""]);
-        charterRows.push(["    Success Criterion", o.successCriterion||""]);
-        charterRows.push(["    Target Date", o.targetDate||""]);
+    // 01 Charter with Benefits
+    const cRows=[["Project Name",c.projectName||""],["Project Code",c.projectCode||""],["Project Manager",c.projectManager||""],["Project Sponsor",c.projectSponsor||""],["Organisation",c.organisation||""],["Start Date",c.startDate||""],["End Date",c.endDate||""],["Budget",c.budget||""],["Purpose",c.purpose||""],["Problem Statement",c.problemStatement||""],["Strategic Alignment",c.strategicAlignment||""],["Within Scope",(c.withinScope||[]).join("; ")],["Out of Scope",(c.outOfScope||[]).join("; ")]];
+    benefits.forEach(b=>{
+      cRows.push(["",""]);
+      cRows.push([`BENEFIT ${b._id}`,b.name||""]);
+      cRows.push(["  Category",b.category||""]);
+      cRows.push(["  Owner",b.owner||""]);
+      cRows.push(["  Description",b.description||""]);
+      cRows.push(["  Target Date",b.targetDate||""]);
+      (b.objectives||[]).forEach(o=>{
+        cRows.push([`  Objective ${o._id}`,o.objective||""]);
+        cRows.push(["    Success Criterion",o.successCriterion||""]);
+        cRows.push(["    Target Date",o.targetDate||""]);
       });
     });
-    const s01 = buildSheet(["Field","Value"], charterRows, [32,80], null);
-    XLSX.utils.book_append_sheet(wb, s01, "01 Charter");
+    XLSX.utils.book_append_sheet(wb,buildSheet(["Field","Value"],cRows,[32,80],null),"01 Charter");
 
-    // ── 02 Team ───────────────────────────────────────────────────────
-    const s02 = buildSheet(
-      ["Login Code","Name","PM / Governance Role","Delivery Role","Availability","Location","Responsibilities"],
-      teamMembers.map(m=>[m.loginCode,m.name,m.role,m.deliveryRole||"",m.availability||"",m.location||"",m.responsibilities||""]),
-      [14,22,28,24,14,16,40], null
-    );
-    XLSX.utils.book_append_sheet(wb, s02, "02 Team");
+    // 02 Team
+    XLSX.utils.book_append_sheet(wb,buildSheet(["Login Code","Name","Role","Delivery Role","Availability","Location","Responsibilities"],teamMembers.map(m=>[m.loginCode,m.name,m.role,m.deliveryRole||"",m.availability||"",m.location||"",m.responsibilities||""]),[14,22,28,24,14,16,40],null),"02 Team");
 
-    // ── 03 Schedule ───────────────────────────────────────────────────
-    const baselineActs = baseline?.snapshot?.activities || [];
-    const s03 = buildSheet(
-      ["ID","Activity / Milestone","Phase","Responsible","Start Date","Target Date","Baseline End","Status"],
-      [...activities.map(a=>{
-        const ba = baselineActs.find(x=>x._id===a._id);
-        return [a._id,a.name||"",a.phase||"",a.responsible||"",a.startDate||"",a.targetDate||"",ba?.targetDate||"—",a._complete?"Complete":"In Progress"];
-      }), ...milestones.map(m=>{
-        const bm = baseline?.snapshot?.milestones?.find(x=>x._id===m._id);
-        return [m._id,m.name||"",m.phase||"","—","",m.targetDate||"",bm?.targetDate||"—",m._complete?"Complete":"Pending"];
-      })],
-      [12,40,22,24,14,14,14,14],
-      (ri,ci,val) => { if(ci===7&&val==="Complete") return DONE_STYLE; return null; }
-    );
-    XLSX.utils.book_append_sheet(wb, s03, "03 Schedule");
+    // 03 Schedule with baseline
+    const bActs = baseline?.snapshot?.activities||[];
+    XLSX.utils.book_append_sheet(wb,buildSheet(
+      ["ID","Activity / Milestone","Phase","Responsible","Start","Target","Baseline End","Status"],
+      [...activities.map(a=>{const ba=bActs.find(x=>x._id===a._id);return[a._id,a.name||"",a.phase||"",a.responsible||"",a.startDate||"",a.targetDate||"",ba?.targetDate||"—",a._complete?"Complete":"In Progress"];}),
+       ...milestones.map(m=>{const bm=baseline?.snapshot?.milestones?.find(x=>x._id===m._id);return[m._id,m.name||"",m.phase||"","—","",m.targetDate||"",bm?.targetDate||"—",m._complete?"Complete":"Pending"];})],
+      [12,40,22,24,12,14,14,14],
+      (ri,ci,val)=>{if(ci===7&&val==="Complete")return DONE;return null;}
+    ),"03 Schedule");
 
-    // ── 04 RACI ───────────────────────────────────────────────────────
-    const members   = teamMembers.filter(m=>m.name&&m.role);
-    const raciRows2 = [...(raciData?.raciRows||[]),...(raciData?.customRows||[])];
-    const s04 = buildSheet(
-      ["Task ID","Task","Phase",...members.map(m=>`${m.name}\n(${m.loginCode})`)],
-      raciRows2.map(row=>[row.taskId,row.label||"",row.phase||"",...members.map(m=>row.assignments?.[m.loginCode]||"")]),
-      [12,40,20,...members.map(()=>16)],
-      (ri,ci,val) => {
-        if(ci>=3){
-          if(val==="R") return RAG_RED;
-          if(val==="A") return RAG_AMBER;
-          if(val==="C") return {fill:{fgColor:{rgb:"102030"},patternType:"solid"},font:{color:{rgb:"3a9ce0"},bold:false,sz:10}};
-          if(val==="I") return {fill:{fgColor:{rgb:"1e1030"},patternType:"solid"},font:{color:{rgb:"9c6ee0"},bold:false,sz:10}};
-        }
-        return null;
-      }
-    );
-    XLSX.utils.book_append_sheet(wb, s04, "04 RACI");
+    // 04 RACI
+    const mems=teamMembers.filter(m=>m.name&&m.role);
+    const rRows=[...(raciData?.raciRows||[]),...(raciData?.customRows||[])];
+    XLSX.utils.book_append_sheet(wb,buildSheet(
+      ["Task ID","Task","Phase",...mems.map(m=>`${m.name}\n(${m.loginCode})`)],
+      rRows.map(r=>[r.taskId,r.label||"",r.phase||"",...mems.map(m=>r.assignments?.[m.loginCode]||"")]),
+      [12,40,20,...mems.map(()=>16)],
+      (ri,ci,val)=>{if(ci>=3){if(val==="R")return R_RED;if(val==="A")return R_AMB;if(val==="C")return CC_BLUE;if(val==="I")return CC_PURP;}return null;}
+    ),"04 RACI");
 
-    // ── 05 Risk Register ──────────────────────────────────────────────
-    const s05 = buildSheet(
+    // 05 Risks
+    XLSX.utils.book_append_sheet(wb,buildSheet(
       ["Risk ID","Name","Category","Cause","Potential Impact","Likelihood","Impact","Score","Mitigation","Response","Owner","Status"],
-      risks.map(r=>{
-        const score=(parseInt(r.likelihood)||1)*(parseInt(r.impact)||1);
-        return [r._id,r.name||"",r.category||"",r.cause||"",r.potentialImpact||"",r.likelihood||"",r.impact||"",score,r.mitigation||"",r.response||"",r._suggestedOwner||"",r.status||"Open"];
-      }),
+      risks.map(r=>{const s=(parseInt(r.likelihood)||1)*(parseInt(r.impact)||1);return[r._id,r.name||"",r.category||"",r.cause||"",r.potentialImpact||"",r.likelihood||"",r.impact||"",s,r.mitigation||"",r.response||"",r._suggestedOwner||"",r.status||"Open"];}),
       [12,30,20,28,28,14,14,10,36,12,20,12],
-      (ri,ci,val,row) => { if(ci===7) return ragStyle(row[5],row[6]); return null; }
-    );
-    XLSX.utils.book_append_sheet(wb, s05, "05 Risk Register");
+      (ri,ci,val,row)=>{if(ci===7)return ragS(row[5],row[6]);return null;}
+    ),"05 Risk Register");
 
-    // ── 05b Issues Register ───────────────────────────────────────────
-    const s05b = buildSheet(
+    // 05b Issues
+    XLSX.utils.book_append_sheet(wb,buildSheet(
       ["Issue ID","Name","Description","Cause","Impact","Priority","Owner","Raised","Target Resolution","Status","Resolution"],
       issues.map(i=>[i._id,i.name||"",i.description||"",i.cause||"",i.impact||"",i.priority||"",i.owner||"",i.raisedDate||"",i.targetResolutionDate||"",i.status||"Open",i.resolution||""]),
       [12,28,36,28,28,12,20,14,18,14,36],
-      (ri,ci,val) => {
-        if(ci===9){
-          if(val==="Resolved") return DONE_STYLE;
-          if(val==="Escalated") return RAG_RED;
-          if(val==="Open")     return RAG_AMBER;
-        }
-        return null;
-      }
-    );
-    XLSX.utils.book_append_sheet(wb, s05b, "05b Issues Register");
+      (ri,ci,val)=>{if(ci===9){if(val==="Resolved")return DONE;if(val==="Escalated")return R_RED;if(val==="Open")return R_AMB;}return null;}
+    ),"05b Issues Register");
 
-    // ── 06 Change Control ─────────────────────────────────────────────
-    const s06 = buildSheet(
-      ["CCR ID","Date","Requested By","Type","Description","Priority","Status","Linked Risk/Issue"],
+    // 06 Change Control
+    XLSX.utils.book_append_sheet(wb,buildSheet(
+      ["CCR ID","Date","Requested By","Type","Description","Priority","Status","Linked To"],
       changes.map(c=>[c.id,c.date,c.requestedBy,c.type,c.description,c.priority||"",c.status||"pending",c.linkedId||""]),
       [12,14,20,12,44,12,14,16],
-      (ri,ci,val) => {
-        if(ci===6){
-          if(val==="approved") return DONE_STYLE;
-          if(val==="rejected") return RAG_RED;
-          if(val==="pending"||val==="reviewed") return RAG_AMBER;
-        }
-        return null;
-      }
-    );
-    XLSX.utils.book_append_sheet(wb, s06, "06 Change Control");
+      (ri,ci,val)=>{if(ci===6){if(val==="approved")return DONE;if(val==="rejected")return R_RED;if(val==="pending"||val==="reviewed")return R_AMB;}return null;}
+    ),"06 Change Control");
 
-    // ── 07 Benefits & KD Tracker ──────────────────────────────────────
-    const kpiRows = [];
-    benefits.forEach(b => {
-      kpiRows.push([`BENEFIT: ${b.name}`,b.category||"",b.owner||"",b.targetDate||"","","","","",""]);
-      const objIds = (b.objectives||[]).map(o=>o._id);
-      const linked = delsFromState.filter(d=>objIds.includes(d.linkedObjectiveId));
-      linked.forEach(d => {
-        (d.kpis||[]).forEach(k => {
-          const pct2 = k.target&&k.actual!==undefined&&k.actual!==""
-            ? Math.round((parseFloat(k.actual)/parseFloat(k.target))*100)+"%"
-            : "—";
-          kpiRows.push(["",d._id,d.name||"",k._id,k.name||"",k.baseline||"",k.target||"",k.actual||"",pct2]);
+    // 07 Benefits & KD Tracker
+    const kRows=[];
+    benefits.forEach(b=>{
+      kRows.push([`BENEFIT: ${b.name}`,b.category||"",b.owner||"",b.targetDate||"","","","","",""]);
+      (b.objectives||[]).map(o=>o._id).forEach(objId=>{
+        dels.filter(d=>d.linkedObjectiveId===objId).forEach(d=>{
+          (d.kpis||[]).forEach(k=>{
+            const pct2=k.target&&k.actual!=null&&k.actual!==""?Math.round((parseFloat(k.actual)/parseFloat(k.target))*100)+"%":"—";
+            kRows.push(["",d._id,d.name||"",k._id,k.name||"",k.baseline||"",k.target||"",k.actual||"",pct2]);
+          });
         });
       });
     });
-    const s07 = buildSheet(
+    XLSX.utils.book_append_sheet(wb,buildSheet(
       ["Benefit","Del ID","Deliverable","KPI ID","KPI Metric","Baseline","Target","Actual","Achievement %"],
-      kpiRows, [28,12,32,16,36,12,12,12,16],
-      (ri,ci,val) => {
-        if(ci===8&&val!=="—"){
-          const n=parseInt(val);
-          return n>=85?DONE_STYLE:n>=50?RAG_AMBER:RAG_RED;
-        }
-        return null;
-      }
-    );
-    XLSX.utils.book_append_sheet(wb, s07, "07 Benefits & KD Tracker");
+      kRows,[28,12,32,16,36,12,12,12,16],
+      (ri,ci,val)=>{if(ci===8&&val!=="—"){const n=parseInt(val);return n>=85?DONE:n>=50?R_AMB:R_RED;}return null;}
+    ),"07 Benefits & KD Tracker");
 
-    // ── 08 Stakeholders ───────────────────────────────────────────────
-    const s08 = buildSheet(
+    // 08 Stakeholders
+    XLSX.utils.book_append_sheet(wb,buildSheet(
       ["SH ID","Name","Category","Contact","Power","Interest","Influence","Ease","Priority Score","Engagement Strategy"],
-      stakeholders.map(s=>{
-        const ps=(((parseInt(s.power)||5)+(parseInt(s.influence)||5))/2*(parseInt(s.interest)||5)/10).toFixed(1);
-        return [s._id||"",s.name||"",s.category||"",s.contact||"",s.power||5,s.interest||5,s.influence||5,s.ease||5,ps,s.engagementStrategy||""];
-      }),
-      [12,28,20,24,10,10,12,10,16,40], null
-    );
-    XLSX.utils.book_append_sheet(wb, s08, "08 Stakeholders");
+      stakeholders.map(s=>{const ps=(((parseInt(s.power)||5)+(parseInt(s.influence)||5))/2*(parseInt(s.interest)||5)/10).toFixed(1);return[s._id||"",s.name||"",s.category||"",s.contact||"",s.power||5,s.interest||5,s.influence||5,s.ease||5,ps,s.engagementStrategy||""];}),
+      [12,28,20,24,10,10,12,10,16,40],null
+    ),"08 Stakeholders");
 
-    // ── 09 Comms Plan ─────────────────────────────────────────────────
-    const comms = sheets["09"]?.data?.comms || [];
-    const s09 = buildSheet(
+    // 09 Comms Plan
+    const comms=sheets["09"]?.data?.comms||[];
+    XLSX.utils.book_append_sheet(wb,buildSheet(
       ["Stakeholder","Category","Contact","Format","Frequency","Key Content","Next Date","Escalation Path","Status"],
       comms.map(c=>[c.stakeholderName||"",c.category||"",c.contact||"",c.format||"",c.frequency||"",c.keyContent||"",c.nextDate||"",c.escalationPath||"",c.status||""]),
-      [28,20,24,16,16,40,14,30,14], null
-    );
-    XLSX.utils.book_append_sheet(wb, s09, "09 Comms Plan");
+      [28,20,24,16,16,40,14,30,14],null
+    ),"09 Comms Plan");
 
-    // ── 10 Sustainability Evidence ────────────────────────────────────
-    const sustainEvidence = sustain;
-    const s10 = buildSheet(
+    // 10 Sustainability
+    XLSX.utils.book_append_sheet(wb,buildSheet(
       ["Activity","Dimension","Focus Area","Question","Answer","Score","Date"],
-      sustainEvidence.map(e=>[e.activityName||"",e.area||"",e.areas?.[0]||"",e.question||"",e.answer||"",e.score!=null?e.score:"",e.date||""]),
+      sustain.map(e=>[e.activityName||"",e.area||"",e.areas?.[0]||"",e.question||"",e.answer||"",e.score!=null?e.score:"",e.date||""]),
       [36,20,20,50,14,10,14],
-      (ri,ci,val) => {
-        if(ci===4){
-          if(val==="yes")       return DONE_STYLE;
-          if(val==="partially") return RAG_AMBER;
-          if(val==="no")        return RAG_RED;
-        }
-        return null;
-      }
-    );
-    XLSX.utils.book_append_sheet(wb, s10, "10 Sustainability Evidence");
+      (ri,ci,val)=>{if(ci===4){if(val==="yes")return DONE;if(val==="partially")return R_AMB;if(val==="no")return R_RED;}return null;}
+    ),"10 Sustainability Evidence");
 
-    const filename = `NorCon_${(project?.code||charter?.projectCode||"PROJECT")}_Workbook_${new Date().toISOString().split("T")[0]}.xlsx`;
-    XLSX.writeFile(wb, filename, {bookType:"xlsx",type:"binary",cellStyles:true});
+    const fn=`NorCon_${(project?.code||c.projectCode||"PROJECT")}_Workbook_${new Date().toISOString().split("T")[0]}.xlsx`;
+    XLSX.writeFile(wb,fn,{bookType:"xlsx",type:"binary",cellStyles:true});
   };
 
-  // ── Generate Word Report via AI ───────────────────────────────────────────
-  const generateWordReport = async () => {
-    setGenerating(true);
-    setReportStatus("Preparing project data...");
-    setReportReady(false);
+  // ── Word report generation ────────────────────────────────────────────────
+  const generateReport = async () => {
+    setGenState("report"); setReportMsg("Claude is writing the report..."); 
+    const ctx = buildProjectContext(state,project,charter,activities,milestones,risks,deliverables,stakeholders,teamMembers);
+    const c = charter||{};
 
-    const ctx = buildProjectContext(state, project, charter, activities, milestones, risks, deliverables, stakeholders, teamMembers);
-    const c   = charter || {};
+    const prompt = `You are generating a formal Project Report for ${ctx.project.name||"the project"}. Write a comprehensive professional narrative with these exact sections. Use ## to mark each section heading. Be specific and data-driven.
 
-    const reportPrompt = `You are generating a formal Project Report for ${ctx.project.name||"the project"}. Write a comprehensive, professional narrative report with the following sections. Use formal project management language appropriate for a Project Sponsor and steering committee. Be specific and data-driven. Format with clear section headings using ## for main sections.
-
-PROJECT CONTEXT:
-Name: ${ctx.project.name||"Not specified"}
-Code: ${ctx.project.code||"—"}
-Project Manager: ${ctx.project.manager||"—"}
-Project Sponsor: ${ctx.project.sponsor||"—"}
-Period: ${ctx.project.start||"TBC"} to ${ctx.project.end||"TBC"}
-Budget: ${ctx.project.budget||"Not specified"}
+PROJECT: ${ctx.project.name||"—"} | Code: ${ctx.project.code||"—"} | PM: ${ctx.project.manager||"—"} | Sponsor: ${ctx.project.sponsor||"—"}
+Period: ${ctx.project.start||"TBC"} → ${ctx.project.end||"TBC"} | Budget: ${ctx.project.budget||"—"}
 Purpose: ${ctx.project.purpose||"Not specified"}
 Strategic Alignment: ${ctx.project.strategic||"Not specified"}
-Baseline Status: ${ctx.baseline ? `Confirmed ${ctx.baseline.confirmedDate} (Version ${ctx.baseline.version})` : "Not yet confirmed"}
+Baseline: ${ctx.baseline?`Confirmed ${ctx.baseline.confirmedDate} (v${ctx.baseline.version})`:"Not confirmed"}
+Progress: ${ctx.progress.pct}% (${ctx.progress.done}/${ctx.progress.total} tasks). Overdue: ${ctx.progress.overdue}.
+Milestones: ${ctx.milestones.complete}/${ctx.milestones.total} complete. Next: ${ctx.milestones.next?`${ctx.milestones.next.name} (${ctx.milestones.next.date})`:"None"}.
+Risks: ${ctx.risks.total} total — ${ctx.risks.red} RED, ${ctx.risks.amber} AMBER, ${ctx.risks.green} GREEN.
+Top risks: ${ctx.risks.top.map(r=>`${r.name} (score:${r.score}, response:${r.response||"—"})`).join("; ")||"None"}
+Issues: ${ctx.issues.total} total, ${ctx.issues.open} open, ${ctx.issues.escalated} escalated.
+Benefits: ${ctx.benefits.map(b=>b.bri!==null?`${b.name}: BRI ${b.bri}%`:` ${b.name}: no KPI data`).join("; ")||"None defined"}
+Changes: ${ctx.changes.total} total, ${ctx.changes.approved} approved, ${ctx.changes.pending} pending.
+Sustainability: ${ctx.sustainability.evidenceCount} evidence entries, ${ctx.sustainability.score!==null?`avg score ${ctx.sustainability.score}%`:"no score"}.
+Lessons learned: ${ctx.lessonsLearned.map(l=>`${l.benefit}: ${l.lessons.slice(0,80)}`).join("; ")||"None recorded"}
 
-PROGRESS DATA:
-Overall completion: ${ctx.progress.pct}% (${ctx.progress.doneTasks} of ${ctx.progress.totalTasks} tasks complete)
-Overdue tasks: ${ctx.progress.overdueActs}
-Milestones: ${ctx.milestones.complete} of ${ctx.milestones.total} complete. ${ctx.milestones.overdue||0} overdue.
-Next milestone: ${ctx.milestones.next ? `${ctx.milestones.next.name} (${ctx.milestones.next.date})` : "None scheduled"}
-
-BENEFITS REALISATION:
-${ctx.benefits.length > 0 ? ctx.benefits.map(b=>b.bri!==null?`- ${b.name}: BRI ${b.bri}% (${b.kpiCount} KPIs tracked)`:`- ${b.name}: No KPI data yet`).join("\n") : "No benefits defined yet"}
-
-RISKS AND ISSUES:
-Risk profile: ${ctx.risks.total} risks — ${ctx.risks.red} RED (immediate action required), ${ctx.risks.amber} AMBER (active mitigation), ${ctx.risks.green} GREEN
-Top risks: ${ctx.risks.top.map(r=>`${r.name} (score ${r.score}, response: ${r.response})`).join("; ")||"None recorded"}
-Issues: ${ctx.issues.total} total — ${ctx.issues.open} open, ${ctx.issues.escalated} escalated
-
-CHANGE CONTROL:
-${ctx.changes.total} changes recorded — ${ctx.changes.approved} approved, ${ctx.changes.pending} pending approval
-
-SUSTAINABILITY:
-${ctx.sustainability.evidenceCount > 0 ? `${ctx.sustainability.evidenceCount} evidence entries recorded. Average score: ${ctx.sustainability.score}%` : "No sustainability evidence recorded yet"}
-
-LESSONS LEARNED:
-${ctx.lessonsLearned.length > 0 ? ctx.lessonsLearned.map(l=>`${l.benefit}: ${l.lessons}`).join("\n") : "No lessons recorded yet"}
-
-Write the following sections in full:
-
+Write these sections in full:
 ## 1. Executive Summary
-A concise summary of project status, key achievements, and critical items requiring attention. 3-4 paragraphs.
-
 ## 2. Project Overview
-Purpose, strategic context, scope summary, team and governance structure.
-
 ## 3. Progress Against Baseline
-Detailed assessment of schedule performance, milestone achievement, and any variances from the confirmed baseline. Highlight any activities significantly ahead or behind plan.
-
 ## 4. Benefits Realisation
-Assessment of each defined benefit, KPI performance, confidence in realisation, and recommendations for benefits at risk.
-
 ## 5. Risks and Issues
-Risk profile analysis, top risks requiring attention, issue resolution status, and any escalations required.
-
 ## 6. Change History
-Summary of change control activity, approved changes and their impact on project scope/cost/time.
-
 ## 7. Sustainability Performance
-Assessment of sustainability evidence collected, performance by dimension, and areas for improvement.
-
 ## 8. Lessons Learned
-Key lessons captured, recommendations for future projects, and knowledge transfer actions.
-
-## 9. Recommendations and Next Steps
-Specific, actionable recommendations for the sponsor and project team. List no more than 5 priority actions.
-
-Write the full report now. Be comprehensive but concise. Use professional language throughout.`;
+## 9. Recommendations and Next Steps`;
 
     try {
-      setReportStatus("Claude is writing the report...");
-      const res  = await fetch("/api/extract", {
-        method:"POST",
-        headers:{"Content-Type":"application/json"},
-        body: JSON.stringify({ model:"claude-sonnet-4-6", max_tokens:4000, messages:[{role:"user",content:reportPrompt}] })
-      });
-      const data = await res.json();
-      const reportText = (data.content||[]).map(b=>b.text||"").join("").trim();
+      const r = await fetch("/api/extract",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({model:"claude-sonnet-4-6",max_tokens:4000,messages:[{role:"user",content:prompt}]})});
+      const d = await r.json();
+      const reportText = (d.content||[]).map(b=>b.text||"").join("").trim();
+      setReportMsg("Building Word document...");
 
-      setReportStatus("Generating Word document...");
-      await buildDocx(reportText, ctx);
-      setReportReady(true);
-      setReportStatus("Report generated successfully.");
+      // Call server-side /api/report to generate proper .docx
+      const docRes = await fetch("/api/report",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({reportText,ctx})});
+      if (!docRes.ok) throw new Error(`API error ${docRes.status}`);
+      const blob = await docRes.blob();
+      const url  = URL.createObjectURL(blob);
+      const a    = document.createElement("a");
+      a.href     = url;
+      a.download = `NorCon_${(project?.code||c.projectCode||"PROJECT")}_Report_${new Date().toISOString().split("T")[0]}.docx`;
+      document.body.appendChild(a); a.click();
+      document.body.removeChild(a); URL.revokeObjectURL(url);
+      setReportMsg("✓ Report downloaded successfully.");
     } catch(err) {
-      setReportStatus("Report generation failed. Please try again.");
+      setReportMsg(`Report generation failed: ${err.message}`);
     }
-    setGenerating(false);
+    setGenState("idle");
   };
 
-  const buildDocx = async (reportText, ctx) => {
-    // Build a styled HTML document and trigger download as .html
-    // (DOCX library not available client-side; HTML renders correctly in Word when opened)
-    const c = charter || {};
-    const date = new Date().toLocaleDateString("en-GB", {day:"2-digit",month:"long",year:"numeric"});
+  const busy = genState !== "idle";
 
-    // Convert markdown ## headings and paragraphs to HTML
-    const htmlBody = reportText
-      .split("\n")
-      .map(line => {
-        if (line.startsWith("## "))   return `<h2>${line.replace("## ","")}</h2>`;
-        if (line.startsWith("# "))    return `<h1>${line.replace("# ","")}</h1>`;
-        if (line.startsWith("- "))    return `<li>${line.replace("- ","")}</li>`;
-        if (line.trim() === "")       return "<br/>";
-        return `<p>${line}</p>`;
-      })
-      .join("\n");
+  // Change control summary stats
+  const pendingCCR  = changes.filter(c=>c.status==="pending"||c.status==="reviewed").length;
+  const approvedCCR = changes.filter(c=>c.status==="approved").length;
+  const rejectedCCR = changes.filter(c=>c.status==="rejected").length;
+  const majorCCR    = changes.filter(c=>c.type==="major"||(c.id||"").startsWith("CCR"));
+  const minorCCR    = changes.filter(c=>c.type==="minor"||(c.id||"").startsWith("MIN"));
 
-    const html = `<!DOCTYPE html>
-<html>
-<head>
-<meta charset="UTF-8">
-<style>
-  body { font-family: Calibri, Arial, sans-serif; font-size: 11pt; color: #1a1a1a; margin: 2cm; line-height: 1.5; }
-  h1   { font-size: 18pt; color: #0D2B1B; border-bottom: 2px solid #2E7D52; padding-bottom: 6px; margin-top: 0; }
-  h2   { font-size: 14pt; color: #2E7D52; margin-top: 24px; margin-bottom: 8px; }
-  p    { margin: 6px 0; }
-  li   { margin: 4px 0 4px 20px; }
-  .cover { background: #0D2B1B; color: #E5F0E8; padding: 40px; margin: -2cm -2cm 2cm -2cm; }
-  .cover h1 { color: #E5F0E8; border-bottom: 2px solid #3a9962; font-size: 22pt; }
-  .cover .meta { color: #8aac96; font-size: 10pt; margin-top: 8px; }
-  .badge { display:inline-block; padding:2px 8px; border-radius:12px; font-size:9pt; font-weight:bold; }
-  .red   { background:#2a1515; color:#e05c5c; }
-  .amber { background:#2a2010; color:#e0a23a; }
-  .green { background:#102a20; color:#3ae0a2; }
-  table { border-collapse: collapse; width:100%; margin: 12px 0; font-size:10pt; }
-  th    { background:#0D2B1B; color:#E5F0E8; padding:6px 10px; text-align:left; }
-  td    { border:1px solid #ddd; padding:5px 10px; }
-  tr:nth-child(even) td { background:#f5f5f5; }
-</style>
-</head>
-<body>
-<div class="cover">
-  <h1>${c.projectName||ctx.project.name||"Project Report"}</h1>
-  <div class="meta">Project Code: ${c.projectCode||"—"} &nbsp;|&nbsp; Date: ${date}</div>
-  <div class="meta">Project Manager: ${c.projectManager||"—"} &nbsp;|&nbsp; Sponsor: ${c.projectSponsor||"—"}</div>
-  <div class="meta" style="margin-top:16px; font-size:11pt; color:#E5F0E8;">
-    Progress: ${ctx.progress.pct}% &nbsp;|&nbsp; 
-    Risks: <span class="red">${ctx.risks.red} RED</span> &nbsp;
-    <span class="amber">${ctx.risks.amber} AMBER</span> &nbsp;
-    <span class="green">${ctx.risks.green} GREEN</span>
-  </div>
-</div>
-${htmlBody}
-</body>
-</html>`;
-
-    const blob     = new Blob([html], {type:"application/vnd.ms-word;charset=utf-8"});
-    const url      = URL.createObjectURL(blob);
-    const a        = document.createElement("a");
-    a.href         = url;
-    a.download     = `NorCon_${(project?.code||c.projectCode||"PROJECT")}_Report_${new Date().toISOString().split("T")[0]}.doc`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-  };
-
-  // ── UI ────────────────────────────────────────────────────────────────────
-  const TABS = [["workbook","📊 Project Workbook"],["report","📄 Project Report"]];
+  function CCRBadge({ status }) {
+    const cols = {pending:C.milestone,reviewed:"#3a9ce0",approved:C.activity,rejected:C.risk};
+    const col  = cols[(status||"pending").toLowerCase()]||C.muted;
+    return <span style={{fontSize:9,fontWeight:700,padding:"2px 7px",borderRadius:12,background:col+"22",color:col,border:`1px solid ${col}44`}}>{status}</span>;
+  }
 
   return (
-    <div style={{display:"flex",flexDirection:"column",flex:1,minHeight:0,overflow:"hidden"}}>
+    <div style={{ flex:1, overflowY:"auto", padding:20 }}>
+      <div style={{ maxWidth:800, margin:"0 auto" }}>
 
-      {/* Sub-nav */}
-      <div style={{background:C.surface,borderBottom:`1px solid ${C.border}`,display:"flex",alignItems:"center",padding:"0 20px",flexShrink:0}}>
-        {TABS.map(([id,label])=>(
-          <button key={id} onClick={()=>setTab(id)}
-            style={{padding:"0 16px",height:38,fontSize:11,fontWeight:600,background:"none",border:"none",
-              borderBottom:`2px solid ${tab===id?C.accentL:"transparent"}`,
-              color:tab===id?C.sage:C.muted,cursor:"pointer"}}>
-            {label}
-          </button>
-        ))}
-      </div>
-
-      <div style={{flex:1,overflowY:"auto",padding:20}}>
-
-        {/* ══ WORKBOOK ══ */}
-        {tab === "workbook" && (
-          <div style={{maxWidth:720}}>
-            <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:9,padding:"24px 28px",marginBottom:16}}>
-              <div style={{fontSize:16,fontWeight:700,color:C.sage,marginBottom:4}}>Project Workbook</div>
-              <div style={{fontSize:12,color:C.muted,marginBottom:20,lineHeight:1.6}}>
-                A fully styled Excel workbook with AI-generated executive summary and all 10 project registers. Includes new structures: benefits, objectives, KPIs, issues, baseline comparison, and sustainability evidence.
+        {/* ══ CHANGE CONTROL ══ */}
+        <SectionCard title="Change Control" icon="🔄">
+          {/* Summary bar */}
+          <div style={{ display:"flex", gap:12, marginBottom:16, flexWrap:"wrap" }}>
+            {[[pendingCCR,"Pending",C.milestone],[approvedCCR,"Approved",C.activity],[rejectedCCR,"Rejected",C.risk],[majorCCR.length,"Major CCRs",C.accentL],[minorCCR.length,"Minor Updates",C.muted]].map(([v,l,col])=>(
+              <div key={l} style={{ background:C.surface2, borderRadius:6, padding:"8px 14px", textAlign:"center", border:`1px solid ${col}33` }}>
+                <div style={{ fontSize:20, fontWeight:700, color:col }}>{v}</div>
+                <div style={{ fontSize:9, color:C.muted, textTransform:"uppercase", letterSpacing:".4px" }}>{l}</div>
               </div>
-
-              {/* Stats */}
-              <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:8,marginBottom:20}}>
-                {[[`${pct}%`,"Progress",`${doneTasks}/${totalTasks} tasks`],
-                  [redRisks>0?redRisks:"✓","Red Risks",redRisks>0?"need action":"all clear"],
-                  [nextMs?.name||"None","Next Milestone",nextMs?.targetDate||"—"],
-                  [stakeholders.length,"Stakeholders","identified"]
-                ].map(([v,l,s])=>(
-                  <div key={l} style={{background:C.surface2,borderRadius:6,padding:"10px 12px",textAlign:"center"}}>
-                    <div style={{fontSize:20,fontWeight:700,color:redRisks>0&&l==="Red Risks"?C.risk:C.sage}}>{v}</div>
-                    <div style={{fontSize:10,color:C.muted,textTransform:"uppercase",letterSpacing:".4px"}}>{l}</div>
-                    <div style={{fontSize:10,color:C.muted}}>{s}</div>
-                  </div>
-                ))}
-              </div>
-
-              {/* Sheet list */}
-              <div style={{marginBottom:20}}>
-                {[["00","Executive Summary","AI-generated narrative — project health in plain English","✨ AI"],
-                  ["01","Charter","Project details, purpose, scope, benefits and objectives","✓"],
-                  ["02","Team Register","Login codes, roles, availability","✓"],
-                  ["03","Schedule","Activities and milestones with baseline comparison","✓"],
-                  ["04","RACI Matrix","R/A/C/I assignments with colour coding","✓"],
-                  ["05","Risk Register","All risks with RAG scores","✓"],
-                  ["05b","Issues Register","All issues with status and resolution","✓"],
-                  ["06","Change Control","Change log with linked risks/issues","✓"],
-                  ["07","Benefits & KD Tracker","Benefits → objectives → deliverables → KPIs with actuals","✓"],
-                  ["08","Stakeholder Matrix","PIIE scores and engagement strategies","✓"],
-                  ["09","Comms Plan","Communication schedule per stakeholder","✓"],
-                  ["10","Sustainability Evidence","Dimension scores and activity evidence","✓"],
-                ].map(([n,l,d,badge])=>(
-                  <div key={n} style={{display:"flex",alignItems:"center",gap:10,padding:"6px 0",borderBottom:`1px solid ${C.border}`,fontSize:12}}>
-                    <span style={{fontSize:10,color:C.accentL,fontFamily:"monospace",width:32,flexShrink:0}}>{n}</span>
-                    <span style={{color:C.sage,fontWeight:600,minWidth:140,flexShrink:0}}>{l}</span>
-                    <span style={{color:C.muted,fontSize:11}}>{d}</span>
-                    <span style={{marginLeft:"auto",fontSize:10,color:n==="00"?C.accentL:C.activity,flexShrink:0}}>{badge}</span>
-                  </div>
-                ))}
-              </div>
-
-              {/* AI summary preview */}
-              {aiSummary && (
-                <div style={{background:C.surface2,border:`1px solid ${C.border}`,borderRadius:7,padding:"14px 16px",marginBottom:16}}>
-                  <div style={{fontSize:10,fontWeight:700,color:C.accentL,textTransform:"uppercase",letterSpacing:".5px",marginBottom:8}}>✨ AI Executive Summary Preview</div>
-                  <div style={{fontSize:12,color:C.dim,lineHeight:1.7,whiteSpace:"pre-wrap"}}>{aiSummary}</div>
-                </div>
-              )}
-
-              <button onClick={generateWorkbook} disabled={generating}
-                style={{width:"100%",padding:"13px",background:generating?C.surface2:C.accent,color:"#fff",border:"none",borderRadius:7,fontSize:14,fontWeight:700,cursor:generating?"not-allowed":"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:10}}>
-                {generating && tab==="workbook" ? (
-                  <><div style={{width:16,height:16,border:"2px solid rgba(255,255,255,0.3)",borderTopColor:"#fff",borderRadius:"50%",animation:"spin .8s linear infinite"}}/>{genStep}</>
-                ) : "📊 Download Project Workbook"}
-              </button>
-            </div>
+            ))}
           </div>
-        )}
+
+          {/* CCR list */}
+          {changes.length === 0 && (
+            <div style={{ textAlign:"center", padding:"24px 0", color:C.muted, fontSize:12 }}>
+              No change requests yet. CCRs raised from Risks, Issues, or baseline edits appear here.
+            </div>
+          )}
+          {majorCCR.map((ccr,i) => {
+            const s   = (ccr.status||"pending").toLowerCase();
+            const col = s==="approved"?C.activity:s==="rejected"?C.risk:s==="reviewed"?"#3a9ce0":C.milestone;
+            return (
+              <div key={ccr.id||i} style={{ border:`1px solid ${C.border}`, borderLeft:`3px solid ${col}`, borderRadius:7, padding:"10px 12px", marginBottom:8, background:C.surface2 }}>
+                <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:6, flexWrap:"wrap" }}>
+                  <span style={{ fontFamily:"monospace", fontSize:11, color:C.accentL, fontWeight:700 }}>{ccr.id}</span>
+                  <span style={{ fontSize:10, color:C.muted }}>{ccr.date}</span>
+                  <CCRBadge status={s}/>
+                  {ccr.priority && <span style={{ fontSize:9, padding:"1px 6px", border:`1px solid ${C.border}`, borderRadius:8, color:C.muted }}>{ccr.priority}</span>}
+                  {ccr.linkedId && <span style={{ fontSize:9, color:C.accentL }}>↗ {ccr.linkedId}</span>}
+                  <span style={{ marginLeft:"auto", fontSize:10, color:C.muted }}>by {ccr.requestedBy||"—"}</span>
+                </div>
+                <div style={{ fontSize:12, color:C.sage, marginBottom:4 }}>{ccr.description||"—"}</div>
+                {ccr.justification && <div style={{ fontSize:11, color:C.muted, fontStyle:"italic" }}>{ccr.justification}</div>}
+                {ccr.proposedValue!==undefined && (
+                  <div style={{ fontSize:11, marginTop:6 }}>
+                    <span style={{ color:C.risk, textDecoration:"line-through", marginRight:8 }}>{String(ccr.oldValue||"")}</span>
+                    <span style={{ color:C.activity }}>→ {String(ccr.proposedValue||"")}</span>
+                  </div>
+                )}
+                {s==="rejected" && ccr.rejectionReason && <div style={{ fontSize:10, color:C.risk, marginTop:4 }}>Rejected: {ccr.rejectionReason}</div>}
+                <div style={{ fontSize:10, color:C.muted, marginTop:6 }}>Approve in L2 → Sheet 06</div>
+              </div>
+            );
+          })}
+          {minorCCR.length > 0 && (
+            <div style={{ marginTop:12, borderTop:`1px solid ${C.border}`, paddingTop:12 }}>
+              <div style={{ fontSize:10, fontWeight:700, color:C.muted, textTransform:"uppercase", letterSpacing:".4px", marginBottom:8 }}>Minor Updates ({minorCCR.length})</div>
+              {minorCCR.map((m,i)=>(
+                <div key={m.id||i} style={{ display:"flex", gap:10, padding:"4px 0", borderBottom:`1px solid ${C.border}22`, fontSize:11 }}>
+                  <span style={{ fontFamily:"monospace", fontSize:9, color:C.muted, width:80, flexShrink:0 }}>{m.id||"—"}</span>
+                  <span style={{ fontSize:9, color:C.muted, width:80, flexShrink:0 }}>{m.date}</span>
+                  <span style={{ color:C.dim, flex:1 }}>{m.description||"—"}</span>
+                  <span style={{ fontSize:9, color:C.accentL }}>{m.elementId||""}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </SectionCard>
+
+        {/* ══ PROJECT WORKBOOK ══ */}
+        <SectionCard title="Project Workbook" icon="📊">
+          <div style={{ fontSize:12, color:C.muted, marginBottom:16, lineHeight:1.6 }}>
+            Fully styled Excel workbook with AI executive summary and 10 registers including benefits & KD tracker, issues, baseline comparison, and sustainability evidence.
+          </div>
+          <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(160px,1fr))", gap:6, marginBottom:16 }}>
+            {[["00","Executive Summary","✨ AI"],["01","Charter + Benefits","✓"],["02","Team","✓"],["03","Schedule","✓"],["04","RACI","✓"],["05","Risk Register","✓"],["05b","Issues Register","✓"],["06","Change Control","✓"],["07","Benefits & KPIs","✓"],["08","Stakeholders","✓"],["09","Comms Plan","✓"],["10","Sustainability","✓"]].map(([n,l,badge])=>(
+              <div key={n} style={{ display:"flex", alignItems:"center", gap:6, padding:"4px 8px", background:C.surface2, borderRadius:5, fontSize:11 }}>
+                <span style={{ fontFamily:"monospace", fontSize:9, color:C.accentL, width:24, flexShrink:0 }}>{n}</span>
+                <span style={{ color:C.dim, flex:1, fontSize:10 }}>{l}</span>
+                <span style={{ fontSize:9, color:n==="00"?C.accentL:C.activity }}>{badge}</span>
+              </div>
+            ))}
+          </div>
+          {aiSummary && (
+            <div style={{ background:C.surface2, border:`1px solid ${C.border}`, borderRadius:7, padding:"12px 14px", marginBottom:14 }}>
+              <div style={{ fontSize:10, fontWeight:700, color:C.accentL, textTransform:"uppercase", letterSpacing:".5px", marginBottom:6 }}>✨ AI Executive Summary Preview</div>
+              <div style={{ fontSize:11, color:C.dim, lineHeight:1.7, whiteSpace:"pre-wrap", maxHeight:200, overflowY:"auto" }}>{aiSummary}</div>
+            </div>
+          )}
+          <button onClick={generateWorkbook} disabled={busy}
+            style={{ width:"100%", padding:"11px", background:busy&&genState==="workbook"?C.surface2:C.accent, color:"#fff", border:"none", borderRadius:7, fontSize:13, fontWeight:700, cursor:busy?"not-allowed":"pointer", display:"flex", alignItems:"center", justifyContent:"center", gap:8 }}>
+            {busy&&genState==="workbook" ? (
+              <><div style={{ width:14,height:14,border:"2px solid rgba(255,255,255,.3)",borderTopColor:"#fff",borderRadius:"50%",animation:"spin .8s linear infinite" }}/>{genStep}</>
+            ) : "📊 Download Project Workbook"}
+          </button>
+        </SectionCard>
 
         {/* ══ PROJECT REPORT ══ */}
-        {tab === "report" && (
-          <div style={{maxWidth:720}}>
-            <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:9,padding:"24px 28px"}}>
-              <div style={{fontSize:16,fontWeight:700,color:C.sage,marginBottom:4}}>Project Report</div>
-              <div style={{fontSize:12,color:C.muted,marginBottom:20,lineHeight:1.6}}>
-                A comprehensive narrative report generated by Claude, covering all aspects of the project. Suitable for steering committee presentations, milestone reviews, and project closure. Downloads as a Word-compatible document.
-              </div>
-
-              {/* Report sections */}
-              <div style={{marginBottom:20}}>
-                <div style={{fontSize:10,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:".5px",marginBottom:10}}>Report sections</div>
-                {["1. Executive Summary","2. Project Overview","3. Progress Against Baseline","4. Benefits Realisation","5. Risks and Issues","6. Change History","7. Sustainability Performance","8. Lessons Learned","9. Recommendations and Next Steps"].map(s=>(
-                  <div key={s} style={{display:"flex",alignItems:"center",gap:8,padding:"5px 0",borderBottom:`1px solid ${C.border}22`,fontSize:12}}>
-                    <span style={{color:C.activity,fontSize:11}}>✓</span>
-                    <span style={{color:C.dim}}>{s}</span>
-                  </div>
-                ))}
-              </div>
-
-              {/* Status message */}
-              {reportStatus && (
-                <div style={{padding:"8px 12px",background:C.surface2,borderRadius:6,fontSize:11,color:reportReady?C.activity:C.dim,marginBottom:16}}>
-                  {reportReady ? "✓ " : ""}{reportStatus}
-                </div>
-              )}
-
-              <button onClick={generateWordReport} disabled={generating}
-                style={{width:"100%",padding:"13px",background:generating?C.surface2:C.accent,color:"#fff",border:"none",borderRadius:7,fontSize:14,fontWeight:700,cursor:generating?"not-allowed":"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:10}}>
-                {generating && tab==="report" ? (
-                  <><div style={{width:16,height:16,border:"2px solid rgba(255,255,255,0.3)",borderTopColor:"#fff",borderRadius:"50%",animation:"spin .8s linear infinite"}}/>{reportStatus}</>
-                ) : "📄 Generate Project Report"}
-              </button>
-            </div>
+        <SectionCard title="Project Report" icon="📄">
+          <div style={{ fontSize:12, color:C.muted, marginBottom:16, lineHeight:1.6 }}>
+            A comprehensive narrative report written by Claude, covering all nine sections. Downloads as a properly formatted Word document (.docx) suitable for steering committee presentation or project closure.
           </div>
-        )}
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:6, marginBottom:16 }}>
+            {["1. Executive Summary","2. Project Overview","3. Progress Against Baseline","4. Benefits Realisation","5. Risks and Issues","6. Change History","7. Sustainability Performance","8. Lessons Learned","9. Recommendations & Next Steps"].map(s=>(
+              <div key={s} style={{ display:"flex", alignItems:"center", gap:6, fontSize:11 }}>
+                <span style={{ color:C.activity, fontSize:10 }}>✓</span>
+                <span style={{ color:C.dim }}>{s}</span>
+              </div>
+            ))}
+          </div>
+          {reportMsg && (
+            <div style={{ padding:"7px 12px", background:C.surface2, borderRadius:6, fontSize:11, color:reportMsg.startsWith("✓")?C.activity:C.dim, marginBottom:14 }}>
+              {reportMsg}
+            </div>
+          )}
+          <button onClick={generateReport} disabled={busy}
+            style={{ width:"100%", padding:"11px", background:busy&&genState==="report"?C.surface2:C.accent, color:"#fff", border:"none", borderRadius:7, fontSize:13, fontWeight:700, cursor:busy?"not-allowed":"pointer", display:"flex", alignItems:"center", justifyContent:"center", gap:8 }}>
+            {busy&&genState==="report" ? (
+              <><div style={{ width:14,height:14,border:"2px solid rgba(255,255,255,.3)",borderTopColor:"#fff",borderRadius:"50%",animation:"spin .8s linear infinite" }}/>{reportMsg}</>
+            ) : "📄 Generate Project Report (.docx)"}
+          </button>
+        </SectionCard>
+
       </div>
       <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
     </div>

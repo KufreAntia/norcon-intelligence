@@ -25,16 +25,15 @@ const C = {
 };
 
 const TABS = [
-  { id:"home",      label:"Home",                 icon:"🏠" },
-  { id:"dashboard", label:"Dashboard",            icon:"📊" },
-  { id:"tasks",     label:"Tasks",                icon:"✅" },
-  { id:"risks",     label:"Risks & Issues",        icon:"⚠️" },
-  { id:"baseline",  label:"Integrated Baseline",  icon:"📅" },
-  { id:"raci",      label:"RACI",                 icon:"📋" },
-  { id:"change",    label:"Change Control",        icon:"🔄" },
-  { id:"report",    label:"Report",               icon:"📄" },
-  { id:"sustain",   label:"Sustainability",        icon:"🌿" },
-  { id:"benefits",  label:"Benefits & Value",       icon:"🎯" },
+  { id:"home",      label:"Home",                  icon:"🏠" },
+  { id:"dashboard", label:"Dashboard",              icon:"📊" },
+  { id:"tasks",     label:"Tasks",                  icon:"✅" },
+  { id:"baseline",  label:"Integrated Baseline",    icon:"📅" },
+  { id:"raci",      label:"RACI",                   icon:"📋" },
+  { id:"benefits",  label:"Benefits & Value",        icon:"🎯" },
+  { id:"risks",     label:"Risks & Issues",          icon:"⚠️" },
+  { id:"sustain",   label:"Sustainability",          icon:"🌿" },
+  { id:"report",    label:"Report",                  icon:"📄" },
 ];
 
 // ── Leave-page save popup ─────────────────────────────────────────────────
