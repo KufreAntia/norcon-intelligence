@@ -9,6 +9,7 @@ import CCRPopup             from "./l3/CCRPopup.jsx";
 import L3Sustainability      from "./l3/L3Sustainability.jsx";
 import L3Benefits            from "./l3/L3Benefits.jsx";
 import L3Risks              from "./l3/L3Risks.jsx";
+import L3Stakeholders       from "./l3/L3Stakeholders.jsx";
 import { isBaselineReady, deriveCurrentPhase } from "../store/baselineUtils.js";
 import SustainabilityPrompt  from "./l3/SustainabilityPrompt.jsx";
 import {
@@ -30,6 +31,7 @@ const TABS = [
   { id:"raci",      label:"RACI",                   icon:"📋" },
   { id:"benefits",  label:"Benefits & Value",        icon:"🎯" },
   { id:"risks",     label:"Risks & Issues",          icon:"⚠️" },
+  { id:"stakeholders", label:"Stakeholders",       icon:"👥" },
   { id:"sustain",   label:"Sustainability",          icon:"🌿" },
   { id:"report",    label:"Report",                  icon:"📄" },
 ];
@@ -333,6 +335,7 @@ export default function OperatingLayer({ state, member, onGoToL2, onMarkComplete
     change:    null,
     risks:     L3Risks,
     benefits:  L3Benefits,
+    stakeholders: L3Stakeholders,
   }[activeTab];
 
   const totalTasks = [...activities, ...milestones].length;
