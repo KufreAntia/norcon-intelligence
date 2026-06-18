@@ -77,6 +77,8 @@ export default function OperatingLayer({ state, member, onGoToL2, onMarkComplete
   const { l2, project } = state;
   const sheets     = l2?.sheets || {};
   const isPM       = member?.isPM;
+  const isSponsor  = member?.isSponsor  || false;
+  const canApprove = member?.canApprove || isPM;
   const loginCode  = member?.loginCode;
 
   const activities   = sheets["03"]?.data?.activities   || [];
@@ -318,6 +320,7 @@ export default function OperatingLayer({ state, member, onGoToL2, onMarkComplete
     onBaselineBlur: handleBaselineBlur,
     sustainConfig, onSustainRecord: handleSustainRecord,
     baseline, currentPlan, baselineReady, baselineActive, currentPhase,
+    isSponsor, canApprove,
     onConfirmBaseline, onApplyCCRToPlan,
     sustainPrompt, setSustainPrompt,
     onSetDirty: setDirty, onClearDirty: clearDirty,

@@ -38,7 +38,7 @@ function parseDate(s) {
   return isNaN(d.getTime()) ? null : d;
 }
 
-export default function L3Dashboard({ state, activities, milestones, risks, issues, deliverables, baseline, currentPlan, baselineReady, baselineActive, currentPhase, onConfirmBaseline, onApplyCCRToPlan, member }) {
+export default function L3Dashboard({ state, activities, milestones, risks, issues, deliverables, baseline, currentPlan, baselineReady, baselineActive, currentPhase, onConfirmBaseline, onApplyCCRToPlan, member, isSponsor, canApprove }) {
   const sheets   = state?.l2?.sheets || {};
   const changes  = sheets["06"]?.data?.changes       || [];
   const costData = sheets["03"]?.data?.costData       || {};
@@ -72,6 +72,32 @@ export default function L3Dashboard({ state, activities, milestones, risks, issu
   const totalActual  = expLog.reduce((s, e) => s + (parseFloat(e.amount) || 0), 0);
   const costVariance = totalPlanned - totalActual;
 
+  // ── Earned Value Management ───────────────────────────────────────────────
+  // EV = budgeted cost of work actually completed
+  // PV = budgeted cost of work scheduled to be done by today
+  // AC = actual cost incurred (from expenditure log)
+  const today = new Date();
+  let evTotal = 0, pvTotal = 0;
+  const acTotal = totalActual; // already computed above
+
+  // Compute EV and PV from activities with planned cost and dates
+  Object.entries(costData).forEach(([id, cd]) => {
+    const planned = parseFloat(cd.plannedAmount) || 0;
+    if (!planned) return;
+    const item = [...activities, ...milestones].find(i => i._id === id);
+    if (!item) return;
+    const targetDate = item.targetDate ? new Date(item.targetDate) : null;
+    // EV: full planned cost if complete, 0 if not
+    if (item._complete) evTotal += planned;
+    // PV: full planned cost if target date has passed (should have been done by now)
+    if (targetDate && targetDate <= today) pvTotal += planned;
+  });
+
+  const cpi = acTotal > 0 ? evTotal / acTotal : null;         // >1 = under budget
+  const spi = pvTotal > 0 ? evTotal / pvTotal : null;         // >1 = ahead of schedule
+  const evVariance = evTotal - acTotal;                        // EV - AC = cost variance
+  const schedVariance = evTotal - pvTotal;                     // EV - PV = schedule variance
+
   // ── Cost performance chart ────────────────────────────────────────────────
   const costChart = useMemo(() => {
     // Sort all items by their Gantt date
@@ -87,9 +113,14 @@ export default function L3Dashboard({ state, activities, milestones, risks, issu
     if (!planned.length && !actual.length) return null;
 
     // Cumulative lines
-    let cp = 0, ca = 0;
+    let cp = 0, ca = 0, ce = 0;
     const planLine = planned.map(i => ({ d: i._date, v: (cp += parseFloat(costData[i._id].plannedAmount)) }));
     const actLine  = actual.map( i => ({ d: i._date, v: (ca += parseFloat(costData[i._id].actualAmount))  }));
+    // EV line: completed activities at their planned cost, plotted at their target date
+    const evItems = ganttItems
+      .filter(i => i._complete && parseFloat(costData[i._id]?.plannedAmount) > 0)
+      .sort((a,b) => a._date - b._date);
+    const evLine = evItems.map(i => ({ d: i._date, v: (ce += parseFloat(costData[i._id].plannedAmount)) }));
 
     const allDates = [...planLine, ...actLine].map(p => p.d.getTime());
     if (!allDates.length) return null;
@@ -97,7 +128,7 @@ export default function L3Dashboard({ state, activities, milestones, risks, issu
     const minMs  = Math.min(...allDates);
     const maxMs  = Math.max(...allDates);
     const span   = Math.max(maxMs - minMs, 30 * 86400000);
-    const dataMax = Math.max(...planLine.map(p => p.v), ...actLine.map(p => p.v), 1);
+    const dataMax = Math.max(...planLine.map(p => p.v), ...actLine.map(p => p.v), ...evLine.map(p => p.v), 1);
     const maxV   = dataMax * 1.2;
 
     const X1 = 40, X2 = 282, Y1 = 18, Y2 = 118;
@@ -117,7 +148,10 @@ export default function L3Dashboard({ state, activities, milestones, risks, issu
     const tc = new Date(minMs); tc.setDate(1); tc.setMonth(tc.getMonth() + 1);
     while (tc.getTime() < maxMs) { ticks.push(new Date(tc)); tc.setMonth(tc.getMonth() + 1); }
 
-    return { planPath, actPath, actLine, xOf, yOf, fmt, minMs, maxMs, dataMax, ticks };
+    const zeroPt   = { d: new Date(minMs), v: 0 };
+    const evPts    = [zeroPt, ...evLine];
+    const evPath   = evPts.map((p,i) => `${i===0?"M":"L"}${xOf(p.d.getTime()).toFixed(1)},${yOf(p.v).toFixed(1)}`).join(" ");
+    return { planPath, actPath, actLine, evPath, evLine, xOf, yOf, fmt, minMs, maxMs, dataMax, ticks };
   }, [activities, milestones, costData]);
 
   const [activeTab, setActiveTab] = useState("overview");
@@ -151,7 +185,7 @@ export default function L3Dashboard({ state, activities, milestones, risks, issu
             <div style={{ fontSize:12, fontWeight:700, color:C.milestone }}>Ready to confirm project baseline</div>
             <div style={{ fontSize:11, color:C.muted }}>All setup sheets approved. Confirm the baseline to launch the project into active delivery.</div>
           </div>
-          {member?.isPM && (
+          {canApprove && (
             <button onClick={() => onConfirmBaseline?.(member.loginCode)}
               style={{ padding:"7px 16px", background:C.milestone, border:"none", borderRadius:6, color:"#fff", fontSize:11, fontWeight:700, cursor:"pointer", whiteSpace:"nowrap" }}>
               Confirm Baseline →
@@ -238,11 +272,14 @@ export default function L3Dashboard({ state, activities, milestones, risks, issu
           {(totalPlanned > 0 || totalActual > 0) && (
             <div style={{ display: "flex", gap: 10, marginBottom: 8, flexWrap: "wrap" }}>
               {[
-                [`£${totalPlanned.toLocaleString()}`, "Planned",      C.accentL],
-                [`£${totalActual.toLocaleString()}`,  "Actual logged", C.milestone],
-                [`${costVariance >= 0 ? "" : "-"}£${Math.abs(costVariance).toLocaleString()}`, "Variance", costVariance >= 0 ? C.activity : C.risk],
+                [`£${totalPlanned.toLocaleString()}`, "Planned (PV)", C.accentL],
+                [`£${totalActual.toLocaleString()}`,  "Actual (AC)",  C.milestone],
+                [`£${Math.round(evTotal).toLocaleString()}`, "Earned (EV)", "#3a9ce0"],
+                [cpi  !== null ? cpi.toFixed(2)  : "—", "CPI",  cpi  === null ? C.muted : cpi  >= 1 ? C.activity : cpi  >= 0.9 ? C.milestone : C.risk],
+                [spi  !== null ? spi.toFixed(2)  : "—", "SPI",  spi  === null ? C.muted : spi  >= 1 ? C.activity : spi  >= 0.9 ? C.milestone : C.risk],
+                [`${evVariance >= 0 ? "+" : ""}£${Math.abs(Math.round(evVariance)).toLocaleString()}`, "CV", evVariance >= 0 ? C.activity : C.risk],
               ].map(([val, lbl, col]) => (
-                <div key={lbl} style={{ background: C.surface2, borderRadius: 6, padding: "5px 10px", textAlign: "center" }}>
+                <div key={lbl} style={{ background: C.surface2, borderRadius: 6, padding: "5px 10px", textAlign: "center", minWidth: 60 }}>
                   <div style={{ fontSize: 16, fontWeight: 700, color: col }}>{val}</div>
                   <div style={{ fontSize: 9, color: C.muted }}>{lbl}</div>
                 </div>
@@ -294,11 +331,20 @@ export default function L3Dashboard({ state, activities, milestones, risks, issu
                 {costChart.actLine.map((p, i) => (
                   <circle key={i} cx={costChart.xOf(p.d.getTime()).toFixed(1)} cy={costChart.yOf(p.v).toFixed(1)} r="3" fill={C.milestone} stroke={C.surface} strokeWidth="1" />
                 ))}
+                {/* EV line */}
+                {costChart.evPath && costChart.evPath !== "M" && (
+                  <path d={costChart.evPath} stroke="#3a9ce0" fill="none" strokeWidth="2" />
+                )}
+                {costChart.evLine?.map((p, i) => (
+                  <circle key={i} cx={costChart.xOf(p.d.getTime()).toFixed(1)} cy={costChart.yOf(p.v).toFixed(1)} r="3" fill="#3a9ce0" stroke={C.surface} strokeWidth="1" />
+                ))}
                 {/* Legend */}
-                <line x1="150" y1="148" x2="166" y2="148" stroke={C.accentL}   strokeWidth="2"   strokeDasharray="6 3" />
-                <text x="169" y="151" fill={C.accentL}   fontSize="8">Planned</text>
-                <line x1="215" y1="148" x2="231" y2="148" stroke={C.milestone} strokeWidth="2.5" />
-                <text x="234" y="151" fill={C.milestone} fontSize="8">Actual</text>
+                <line x1="100" y1="148" x2="116" y2="148" stroke={C.accentL}   strokeWidth="2"   strokeDasharray="6 3" />
+                <text x="119" y="151" fill={C.accentL}   fontSize="8">PV (Planned)</text>
+                <line x1="178" y1="148" x2="194" y2="148" stroke={C.milestone} strokeWidth="2.5" />
+                <text x="197" y="151" fill={C.milestone} fontSize="8">AC (Actual)</text>
+                <line x1="245" y1="148" x2="261" y2="148" stroke="#3a9ce0"    strokeWidth="2" />
+                <text x="264" y="151" fill="#3a9ce0"    fontSize="8">EV</text>
               </svg>
             )}
         </div>
@@ -431,7 +477,7 @@ export default function L3Dashboard({ state, activities, milestones, risks, issu
                       <div key={i} style={{ display:"flex", alignItems:"center", gap:10, padding:"6px 0", borderTop:`1px solid ${C.border}` }}>
                         <span style={{ fontFamily:"monospace", fontSize:11, color:C.accentL }}>{ccr.id}</span>
                         <span style={{ fontSize:11, color:C.dim, flex:1 }}>{ccr.description}</span>
-                        {member?.isPM && (
+                        {canApprove && (
                           <button onClick={() => onApplyCCRToPlan?.(ccr.id, member.loginCode)}
                             style={{ padding:"4px 12px", background:C.accent, border:"none", borderRadius:5, color:"#fff", fontSize:10, fontWeight:700, cursor:"pointer" }}>
                             Apply to Plan

@@ -49,12 +49,19 @@ export default async function handler(req, res) {
     }
 
     // Determine rights
-    const isPM   = member.role === 'Project Manager';
+    const isPM       = member.role === 'Project Manager';
+    const isSponsor  = member.role === 'Project Sponsor' || member.role === 'Project Director';
+    // PM can act on behalf of sponsor — both have governance authority
+    const canApprove = isPM || isSponsor;
     const rights = {
       isPM,
+      isSponsor,
+      canApprove,
       role:       member.role,
       name:       member.name,
       loginCode:  member.loginCode,
+      isSponsor,
+      canApprove,
       // RACI-based element rights built from Sheet 04 data
       raciRights: buildRaciRights(member.loginCode, state),
     };

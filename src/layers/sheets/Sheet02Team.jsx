@@ -3,10 +3,12 @@ import { useState } from "react";
 const C = { surface:"#122E1E", surface2:"#183D28", border:"#1F4D34", accent:"#2E7D52", accentL:"#3a9962", sage:"#E5F0E8", dim:"#8aac96", muted:"#5a7a66", risk:"#e05c5c" };
 const inp = { width:"100%", background:C.surface2, border:`1px solid ${C.border}`, borderRadius:5, color:C.sage, fontSize:12, padding:"7px 10px", outline:"none", boxSizing:"border-box", fontFamily:"inherit" };
 
-const PM_ROLES = ["Project Manager","Assistant Project Manager","Project Scheduler","Project Controller","Risk Owner","Communications Lead","Technical Lead 1","Technical Lead 2","Research Coordinator","Marketing Lead","Document Controller"];
+const PM_ROLES = ["Project Manager","Project Sponsor","Project Director","Assistant Project Manager","Project Scheduler","Project Controller","Risk Owner","Communications Lead","Technical Lead 1","Technical Lead 2","Research Coordinator","Marketing Lead","Document Controller"];
 const DEL_ROLES = ["Content Curator","Research Coordinator","Communications Coordinator","Marketing Lead","Data Analyst","Design Lead","Outreach Lead","Technical Specialist","Partnership Lead","Editorial Lead"];
 
 const GOV_TIERS = {
+  "Project Sponsor":  "Tier 1 — Sponsor",
+  "Project Director": "Tier 1 — Sponsor",
   "Project Manager": "Tier 3 — Project Manager",
   "Assistant Project Manager": "Tier 3 — Project Manager",
   "Project Scheduler": "Tier 4 — Project Team",
@@ -58,10 +60,11 @@ export default function Sheet02Team({ data, locked, loginCodes, onUpdate }) {
 
       {members.map((m,i)=>(
         <div key={i} style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:7, padding:"12px 14px", marginBottom:8,
-          borderLeft: i===0 ? `3px solid ${C.accentL}` : `3px solid ${C.border}` }}>
+          borderLeft: i===0 ? `3px solid ${C.accentL}` : m.role==='Project Sponsor'||m.role==='Project Director' ? `3px solid ${C.milestone}` : `3px solid ${C.border}` }}>
           <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:10 }}>
             <div style={{ fontFamily:"monospace", fontSize:12, color:C.accentL, fontWeight:700, background:C.surface2, padding:"4px 10px", borderRadius:5, border:`1px solid ${C.border}` }}>{m.loginCode}</div>
             {i===0 && <div style={{ fontSize:10, color:C.accentL }}>Project Manager · Full Access</div>}
+            {(m.role==='Project Sponsor'||m.role==='Project Director') && <div style={{ fontSize:10, color:C.milestone }}>Sponsor · Full Governance Access</div>}
             {m.role && GOV_TIERS[m.role] && <div style={{ fontSize:10, color:C.muted, marginLeft:"auto" }}>{GOV_TIERS[m.role]}</div>}
           </div>
           <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:10 }}>
@@ -108,7 +111,7 @@ export default function Sheet02Team({ data, locked, loginCodes, onUpdate }) {
         <div style={{ fontSize:12, color:C.dim, lineHeight:1.6 }}>
           Rights are tied to Element IDs via the RACI matrix — not to registers.
           Complete Sheet 04 (RACI) to assign element-level permissions per team member.
-          The Project Manager ({members[0]?.loginCode}) retains full access to all elements.
+          The Project Manager and Project Sponsor share full governance access. Login as either to access all platform functions.
         </div>
       </div>
     </div>
