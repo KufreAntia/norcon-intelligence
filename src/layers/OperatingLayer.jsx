@@ -1,7 +1,6 @@
 import { useState, useCallback, useRef } from "react";
 import L3Home               from "./l3/L3Home.jsx";
 import L3Dashboard          from "./l3/L3Dashboard.jsx";
-import L3Tasks              from "./l3/L3Tasks.jsx";
 import L3IntegratedBaseline from "./l3/L3IntegratedBaseline.jsx";
 import L3RACI               from "./l3/L3RACI.jsx";
 import L3Report             from "./l3/L3Report.jsx";
@@ -27,7 +26,6 @@ const C = {
 const TABS = [
   { id:"home",      label:"Home",                  icon:"🏠" },
   { id:"dashboard", label:"Dashboard",              icon:"📊" },
-  { id:"tasks",     label:"Tasks",                  icon:"✅" },
   { id:"baseline",  label:"Integrated Baseline",    icon:"📅" },
   { id:"raci",      label:"RACI",                   icon:"📋" },
   { id:"benefits",  label:"Benefits & Value",        icon:"🎯" },
@@ -239,7 +237,7 @@ export default function OperatingLayer({ state, member, onGoToL2, onMarkComplete
   }, [onStateChange]);
 
   // ── Tab navigation with leave-page check ─────────────────────────────
-  const TABS_WITH_FORMS = ["baseline", "tasks", "home", "benefits"];
+  const TABS_WITH_FORMS = ["baseline", "home", "benefits"];
   const requestTabChange = (toTab) => {
     if (toTab === activeTab) return;
     if (dirtyRef.current && TABS_WITH_FORMS.includes(activeTab)) {
@@ -329,7 +327,6 @@ export default function OperatingLayer({ state, member, onGoToL2, onMarkComplete
   const TabComponent = {
     home:      L3Home,
     dashboard: L3Dashboard,
-    tasks:     L3Tasks,
     baseline:  L3IntegratedBaseline,
     raci:      L3RACI,
     report:    L3Report,
@@ -454,7 +451,10 @@ export default function OperatingLayer({ state, member, onGoToL2, onMarkComplete
             onBaselineBlur={handleBaselineBlur}
             onSetDirty={setDirty}
             onClearDirty={clearDirty}
-            baseline={baseline}/>
+            baseline={baseline}
+            onMarkComplete={onMarkComplete}
+            sustainConfig={sustainConfig}
+            setSustainPrompt={setSustainPrompt}/>
         ) : TabComponent ? (
           <TabComponent {...sharedProps}/>
         ) : null}

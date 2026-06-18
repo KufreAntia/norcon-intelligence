@@ -250,8 +250,27 @@ function GanttSVG({ items, gStart, gEnd, phases, baselineItems }) {
 }
 
 // ── Main component ────────────────────────────────────────────────────────────
-export default function L3IntegratedBaseline({ state, activities, milestones, member, onStateChange, onBaselineBlur, baseline }) {
-  const canEdit = member?.isPM;
+export default function L3IntegratedBaseline({ state, activities, milestones, member, onStateChange, onBaselineBlur, baseline, onMarkComplete, sustainConfig, setSustainPrompt }) {
+  const canEdit  = member?.isPM || member?.canApprove;
+  const loginCode = member?.loginCode;
+
+  // Task filter — mirrors what Tasks tab had
+  const [taskFilter, setTaskFilter] = useState("all");
+
+  // RACI lookup for assignment awareness
+  const raciRows = [...(state?.l2?.sheets?.["04"]?.data?.raciRows || []), ...(state?.l2?.sheets?.["04"]?.data?.customRows || [])];
+  const getAssignment = (taskId) => raciRows.find(r => r.taskId === taskId)?.assignments?.[loginCode] || null;
+  const canComplete   = (taskId) => getAssignment(taskId) === "R" || canEdit;
+  const isMine        = (taskId) => !!getAssignment(taskId);
+
+  // Handle mark complete — fires sustainability prompt if configured
+  const handleComplete = (item, complete) => {
+    if (complete && sustainConfig && Object.values(sustainConfig.enabled || {}).some(Boolean)) {
+      setSustainPrompt?.({ ...item, itemType: item.itemType || "activity" });
+    } else {
+      onMarkComplete?.(item._id, item.itemType || "activity", complete);
+    }
+  };
   const sheets  = state?.l2?.sheets || {};
 
   // costData lives in global state only — no local copy that can go stale
@@ -385,10 +404,11 @@ export default function L3IntegratedBaseline({ state, activities, milestones, me
   const inp      = { background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 4, color: C.sage, fontSize: 11, padding: "3px 6px", outline: "none", fontFamily: "inherit", boxSizing: "border-box", width: "100%" };
   const dateInp  = { ...inp, fontSize: 10, padding: "2px 4px", cursor: canEdit ? "pointer" : "default" };
   const TH       = { background: C.surface2, fontSize: 9, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: ".4px", padding: "0 8px", whiteSpace: "nowrap" };
-  const W_NAME   = 160;
-  const W_DATE   = 130;
-  const W_PLAN   = 76;
-  const W_ACT    = 76;
+  const W_NAME   = 150;
+  const W_DATE   = 120;
+  const W_PLAN   = 70;
+  const W_ACT    = 70;
+  const W_DONE   = 42;
 
   // ── Sync scroll refs ──────────────────────────────────────────────────────
   const leftRef  = useRef(null);
@@ -415,7 +435,8 @@ export default function L3IntegratedBaseline({ state, activities, milestones, me
               <span style={{ fontSize: 8 }}>END</span>
             </div>
             <div style={{ ...TH, width: W_PLAN, textAlign: "right", borderRight: `1px solid ${C.border}` }}>Plan £</div>
-            <div style={{ ...TH, width: W_ACT,  textAlign: "right" }}>Act £</div>
+            <div style={{ ...TH, width: W_ACT,  textAlign: "right", borderRight: `1px solid ${C.border}` }}>Act £</div>
+            <div style={{ ...TH, width: W_DONE, textAlign: "center" }}>Done</div>
           </div>
 
           {/* Body */}
@@ -428,10 +449,15 @@ export default function L3IntegratedBaseline({ state, activities, milestones, me
               if (!phItems.length) return null;
               return (
                 <div key={phase}>
-                  <div style={{ height: 24, display: "flex", alignItems: "center", padding: "0 8px", background: C.surface, borderBottom: `1px solid ${C.border}44`, fontSize: 9, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: ".5px", width: W_NAME + W_DATE + W_PLAN + W_ACT }}>
+                  <div style={{ height: 24, display: "flex", alignItems: "center", padding: "0 8px", background: C.surface, borderBottom: `1px solid ${C.border}44`, fontSize: 9, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: ".5px", width: W_NAME + W_DATE + W_PLAN + W_ACT + W_DONE }}>
                     {phase}
                   </div>
-                  {phItems.map((item, idx) => {
+                  {phItems.filter(item => {
+                    if (taskFilter === "mine")       return isMine(item._id);
+                    if (taskFilter === "incomplete") return !item._complete;
+                    if (taskFilter === "complete")   return item._complete;
+                    return true;
+                  }).map((item, idx) => {
                     const isMile = item.itemType === "milestone";
                     const cd     = costData[item._id] || {};
                     const bg     = idx % 2 === 0 ? C.surface : C.surface2;
@@ -463,10 +489,32 @@ export default function L3IntegratedBaseline({ state, activities, milestones, me
                         </div>
 
                         {/* Actual */}
-                        <div style={{ width: W_ACT, padding: "0 4px", flexShrink: 0 }}>
+                        <div style={{ width: W_ACT, padding: "0 4px", borderRight: `1px solid ${C.border}22`, flexShrink: 0 }}>
                           <span style={{ fontSize: 10, color: cd.actualAmount ? C.milestone : C.muted, display: "block", textAlign: "right", paddingRight: 4 }}>
                             {cd.actualAmount ? `£${cd.actualAmount}` : "—"}
                           </span>
+                        </div>
+
+                        {/* Done toggle */}
+                        <div style={{ width: W_DONE, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                          {canComplete(item._id) ? (
+                            <button
+                              onClick={() => handleComplete(item, !item._complete)}
+                              title={item._complete ? "Undo completion" : "Mark complete"}
+                              style={{
+                                width: 26, height: 26, borderRadius: 5, border: `1px solid ${item._complete ? C.activity : C.border}`,
+                                background: item._complete ? C.activity + "22" : "none",
+                                color: item._complete ? C.activity : C.muted,
+                                cursor: "pointer", fontSize: 13, display: "flex", alignItems: "center", justifyContent: "center",
+                                transition: "all .15s",
+                              }}>
+                              {item._complete ? "✓" : ""}
+                            </button>
+                          ) : (
+                            <div style={{ width: 26, height: 26, display: "flex", alignItems: "center", justifyContent: "center", color: item._complete ? C.activity : C.border, fontSize: 13 }}>
+                              {item._complete ? "✓" : "—"}
+                            </div>
+                          )}
                         </div>
 
                       </div>
