@@ -305,19 +305,28 @@ export default function L3IntegratedBaseline({ state, activities, milestones, me
     }));
   }, [onStateChange]);
 
-  // ── Date editing ──────────────────────────────────────────────────────────
+  // ── Date editing ─────────────────────────────────────────────────────────
+  // onChange: save date immediately so Gantt bar updates while typing
   const updateItemDate = useCallback((taskId, itemType, field, newVal) => {
     if (!newVal) return;
-    const key      = itemType === "milestone" ? "milestones" : "activities";
-    const oldItems = itemType === "milestone" ? milestones : activities;
-    const old      = oldItems.find(i => i._id === taskId);
-    onBaselineBlur?.(itemType, taskId, field, old?.[field] || "", newVal, old?.name || taskId);
+    const key = itemType === "milestone" ? "milestones" : "activities";
     saveSheet03({
       [key]: (sheets["03"]?.data?.[key] || []).map(i =>
         i._id === taskId ? { ...i, [field]: newVal, _autoDate: false } : i
       ),
     });
-  }, [activities, milestones, sheets, saveSheet03, onBaselineBlur]);
+  }, [sheets, saveSheet03]);
+
+  // onBlur: fire CCR popup only once the PM has finished editing and leaves the field
+  const handleDateBlur = useCallback((taskId, itemType, field, newVal) => {
+    if (!newVal) return;
+    const oldItems = itemType === "milestone" ? milestones : activities;
+    const old      = oldItems.find(i => i._id === taskId);
+    const oldVal   = old?.[field] || "";
+    if (newVal !== oldVal) {
+      onBaselineBlur?.(itemType, taskId, field, oldVal, newVal, old?.name || taskId);
+    }
+  }, [activities, milestones, onBaselineBlur]);
 
   // ── Cost editing ──────────────────────────────────────────────────────────
   const updateCost = useCallback((id, field, val) => {
@@ -472,10 +481,12 @@ export default function L3IntegratedBaseline({ state, activities, milestones, me
                         {/* Dates */}
                         <div style={{ width: W_DATE, display: "flex", flexDirection: "column", justifyContent: "center", borderRight: `1px solid ${C.border}22`, flexShrink: 0, padding: "2px 4px", gap: 2 }}>
                           <input type="date" value={item.startDate || ""} disabled={!canEdit} style={dateInp}
-                            onChange={e => updateItemDate(item._id, item.itemType, "startDate", e.target.value)} />
+                            onChange={e => updateItemDate(item._id, item.itemType, "startDate", e.target.value)}
+                            onBlur={e => handleDateBlur(item._id, item.itemType, "startDate", e.target.value)} />
                           {!isMile
                             ? <input type="date" value={item.targetDate || ""} disabled={!canEdit} style={dateInp}
-                                onChange={e => updateItemDate(item._id, item.itemType, "targetDate", e.target.value)} />
+                                onChange={e => updateItemDate(item._id, item.itemType, "targetDate", e.target.value)}
+                                onBlur={e => handleDateBlur(item._id, item.itemType, "targetDate", e.target.value)} />
                             : <span style={{ fontSize: 9, color: C.muted, paddingLeft: 2 }}>milestone</span>
                           }
                         </div>
