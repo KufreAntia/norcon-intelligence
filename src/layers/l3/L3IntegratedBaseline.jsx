@@ -12,7 +12,7 @@ const PHASE_COLORS = {
   Concept:"#5d8aff", Definition:"#3ae0a2", Development:"#2E7D52",
   "Handover & Closeout":"#e0a23a", Execution:"#8aac96",
 };
-const ROW_H = 46;
+const ROW_H = 54;
 const DAY_W = 20;
 
 // ── Pure date utils ──────────────────────────────────────────────────────────
@@ -465,7 +465,7 @@ export default function L3IntegratedBaseline({ state, activities, milestones, me
                       <div key={item._id} style={{ display: "flex", height: ROW_H, background: bg, borderBottom: `1px solid ${C.border}22`, alignItems: "center" }}>
 
                         {/* Name */}
-                        <div style={{ width: W_NAME, padding: "0 8px", fontSize: 11, color: isMile ? C.milestone : C.sage, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", borderRight: `1px solid ${C.border}22`, flexShrink: 0 }}>
+                        <div style={{ width: W_NAME, padding: "4px 8px", fontSize: 11, color: isMile ? C.milestone : C.sage, overflow: "hidden", wordBreak: "break-word", lineHeight: 1.35, borderRight: `1px solid ${C.border}22`, flexShrink: 0 }}>
                           {isMile ? "◆ " : ""}{item.name || item.description || "—"}
                         </div>
 
