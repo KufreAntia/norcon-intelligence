@@ -24,7 +24,7 @@ function scoreLabel(s) {
   return       { label:"Poor",         color:C.risk };
 }
 
-// ── Nuanced governance scoring ────────────────────────────────────────────
+// ── Nuanced governance scoring ────────────────────────────────────
 function computeGovernanceScore(state) {
   const sheets  = state?.l2?.sheets || {};
   const changes = sheets["06"]?.data?.changes || [];
@@ -40,9 +40,12 @@ function computeGovernanceScore(state) {
 
   // Delayed: submitted >7 days ago and still pending
   const now = Date.now();
+  // FIX 13: CCR dates are stored in ISO format (YYYY-MM-DD) throughout the codebase.
+  // new Date(isoString) is correct and sufficient — the split/reverse pattern was
+  // intended for DD/MM/YYYY but incorrectly implemented and unnecessary for ISO dates.
   const hasDelayed = hasChanges && majorChanges.some(c => {
     if(c.status !== "pending" && c.status !== "reviewed") return false;
-    const d = c.date ? new Date(c.date.split("/").reverse().join("-")) : null;
+    const d = c.date ? new Date(c.date) : null;
     return d && (now - d.getTime()) > 7*24*60*60*1000;
   });
 
@@ -181,7 +184,7 @@ function DimCard({ dimId, score, checks, evidence, selectedAreas }) {
                     {total > 0 ? (
                       <div style={{ display:"flex", gap:4, alignItems:"center" }}>
                         {yesCount>0 && <span style={{ fontSize:9, color:C.activity, fontWeight:700 }}>✓{yesCount}</span>}
-                        {partCount>0 && <span style={{ fontSize:9, color:C.milestone, fontWeight:700 }}>⚬{partCount}</span>}
+                        {partCount>0 && <span style={{ fontSize:9, color:C.milestone, fontWeight:700 }}>○{partCount}</span>}
                         {noCount>0 && <span style={{ fontSize:9, color:C.risk, fontWeight:700 }}>✕{noCount}</span>}
                         <span style={{ fontSize:9, color:col, fontWeight:700, marginLeft:4 }}>{areaScore?.toFixed(0)}%</span>
                       </div>
@@ -282,7 +285,7 @@ export default function L3Sustainability({ state, sustainData }) {
                     <div style={{ fontSize:10, color:C.muted }}>{ev.area}</div>
                   </div>
                   <div style={{ fontSize:11, fontWeight:700, color: ev.answer==="yes"?C.activity:ev.answer==="partially"?C.milestone:C.risk }}>
-                    {ev.answer==="yes"?"✓ Yes":ev.answer==="partially"?"⚬ Partially":"✕ No"}
+                    {ev.answer==="yes"?"✓ Yes":ev.answer==="partially"?"○ Partially":"✕ No"}
                   </div>
                 </div>
               );

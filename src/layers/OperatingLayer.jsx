@@ -35,7 +35,7 @@ const TABS = [
   { id:"report",    label:"Report",                  icon:"📄" },
 ];
 
-// ── Leave-page save popup ─────────────────────────────────────────────────
+// ── Leave-page save popup ────────────────────────────────────────────
 function LeavePopup({ onLogCCR, onMinor, onDiscard, onCancel, tabLabel }) {
   return (
     <div onClick={onCancel} style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.6)", zIndex:1000, display:"flex", alignItems:"center", justifyContent:"center" }}>
@@ -258,7 +258,7 @@ export default function OperatingLayer({ state, member, onGoToL2, onMarkComplete
     }));
   }, [onStateChange]);
 
-  // ── Tab navigation with leave-page check ─────────────────────────────
+  // ── Tab navigation with leave-page check ────────────────────────────
   const TABS_WITH_FORMS = ["baseline", "home", "benefits"];
   const requestTabChange = (toTab) => {
     if (toTab === activeTab) return;
@@ -276,12 +276,14 @@ export default function OperatingLayer({ state, member, onGoToL2, onMarkComplete
     setActiveTab(toTab);
   };
 
+  // FIX 14: renamed inner variable from `changes` to `dirtyChanges` to avoid
+  // shadowing the outer CCR changes array (sheets["06"].data.changes).
   const handleLeaveLogCCR = () => {
-    const toTab    = leavePopup?.toTab;
-    const tabLabel = TABS.find(t=>t.id===activeTab)?.label || activeTab;
-    const changes  = dirtyDescRef.current;
-    const desc = changes.length > 0
-      ? changes.join(" | ")
+    const toTab        = leavePopup?.toTab;
+    const tabLabel     = TABS.find(t=>t.id===activeTab)?.label || activeTab;
+    const dirtyChanges = dirtyDescRef.current;
+    const desc = dirtyChanges.length > 0
+      ? dirtyChanges.join(" | ")
       : `Changes on ${tabLabel}`;
     setLeavePopup(null);
     setCcrPending({
@@ -292,7 +294,7 @@ export default function OperatingLayer({ state, member, onGoToL2, onMarkComplete
       newValue:    "",
       elementName: tabLabel,
       description: desc,
-      changeList:  changes,
+      changeList:  dirtyChanges,
       date:        new Date().toLocaleDateString("en-GB"),
       requestedBy: member?.name || loginCode,
     });
@@ -355,15 +357,16 @@ export default function OperatingLayer({ state, member, onGoToL2, onMarkComplete
     onSetDirty: setDirty, onClearDirty: clearDirty,
   };
 
+  // FIX 22: removed dead `change: null` entry (Change Control is now a section
+  // inside the Report tab, not a standalone tab).
   const TabComponent = {
-    home:      L3Home,
-    dashboard: L3Dashboard,
-    baseline:  L3IntegratedBaseline,
-    raci:      L3RACI,
-    report:    L3Report,
-    change:    null,
-    risks:     L3Risks,
-    benefits:  L3Benefits,
+    home:         L3Home,
+    dashboard:    L3Dashboard,
+    baseline:     L3IntegratedBaseline,
+    raci:         L3RACI,
+    report:       L3Report,
+    risks:        L3Risks,
+    benefits:     L3Benefits,
     stakeholders: L3Stakeholders,
   }[activeTab];
 
