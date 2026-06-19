@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, useMemo, useRef } from "react";
+import { useState, useCallback, useRef, useMemo } from "react";
 
 const C = {
   surface:"#122E1E", surface2:"#183D28", border:"#1F4D34",
