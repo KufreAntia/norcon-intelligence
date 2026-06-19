@@ -59,7 +59,6 @@ export const INITIAL_STATE = {
       '06': { status: 'empty', locked: false, data: { changes: [] } },
       '07': { status: 'empty', locked: false, data: { deliverables: [] } },
       '08': { status: 'empty', locked: false, data: { stakeholders: [] } },
-      '09': { status: 'empty', locked: false, data: { comms: [] } },
       '10': { status: 'empty', locked: false, data: { enabled: {}, selected: {}, actLinks: {} } },
     },
 
@@ -83,7 +82,7 @@ export const SHEETS = [
   { id: '05', label: 'Risks',          icon: 'ti-alert-triangle',   enforced: false },
   { id: '06', label: 'Change Control', icon: 'ti-git-branch',       enforced: false },
   { id: '07', label: 'KD Tracker',     icon: 'ti-target',           enforced: false },
-  { id: '08', label: 'Stakeholders & Comms', icon: 'ti-building',    enforced: false },
+  { id: '08', label: 'Stakeholders',        icon: 'ti-users-group', enforced: false },
   { id: '10', label: 'Sustainability', icon: 'ti-leaf',             enforced: false },
 ];
 
