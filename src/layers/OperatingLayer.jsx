@@ -71,7 +71,7 @@ export default function OperatingLayer({ state, member, onGoToL2, onMarkComplete
   // Leave-page detection
   const [leavePopup,   setLeavePopup]   = useState(null); // { toTab, dirtyDesc }
   const dirtyRef = useRef(false); // tracks whether current tab has unsaved non-click changes
-  const dirtyDescRef = useRef(""); // human-readable description of what's dirty
+  const dirtyDescRef = useRef([]); // accumulated list of human-readable change descriptions
 
   const { l2, project } = state;
   const sheets     = l2?.sheets || {};
@@ -271,34 +271,41 @@ export default function OperatingLayer({ state, member, onGoToL2, onMarkComplete
 
   const commitTabChange = (toTab) => {
     dirtyRef.current = false;
-    dirtyDescRef.current = "";
+    dirtyDescRef.current = [];
     setLeavePopup(null);
     setActiveTab(toTab);
   };
 
   const handleLeaveLogCCR = () => {
-    const toTab = leavePopup?.toTab;
+    const toTab    = leavePopup?.toTab;
+    const tabLabel = TABS.find(t=>t.id===activeTab)?.label || activeTab;
+    const changes  = dirtyDescRef.current;
+    const desc = changes.length > 0
+      ? changes.join(" | ")
+      : `Changes on ${tabLabel}`;
     setLeavePopup(null);
-    // Trigger CCR popup with generic description
     setCcrPending({
       elementType: "general",
-      elementId: "batch",
-      fieldName: "multiple",
-      oldValue: "",
-      newValue: "",
-      elementName: TABS.find(t=>t.id===activeTab)?.label || activeTab,
-      description: `Batch edits on ${TABS.find(t=>t.id===activeTab)?.label || activeTab}: ${dirtyDescRef.current}`,
-      date: new Date().toLocaleDateString("en-GB"),
+      elementId:   "batch",
+      fieldName:   "multiple",
+      oldValue:    "",
+      newValue:    "",
+      elementName: tabLabel,
+      description: desc,
+      changeList:  changes,
+      date:        new Date().toLocaleDateString("en-GB"),
       requestedBy: member?.name || loginCode,
     });
     dirtyRef.current = false;
-    dirtyDescRef.current = "";
+    dirtyDescRef.current = [];
     if (toTab) setActiveTab(toTab);
   };
 
   const handleLeaveMinor = () => {
     const toTab = leavePopup?.toTab;
-    const desc  = dirtyDescRef.current || `Changes on ${TABS.find(t=>t.id===activeTab)?.label || activeTab}`;
+    const desc  = dirtyDescRef.current.length > 0
+      ? dirtyDescRef.current.join(" | ")
+      : `Changes on ${TABS.find(t=>t.id===activeTab)?.label || activeTab}`;
     const newChanges = [...changes, {
       id: generateMinorId(changes),
       type: "minor",
@@ -308,14 +315,14 @@ export default function OperatingLayer({ state, member, onGoToL2, onMarkComplete
     }];
     saveChanges(newChanges);
     dirtyRef.current = false;
-    dirtyDescRef.current = "";
+    dirtyDescRef.current = [];
     setLeavePopup(null);
     if (toTab) setActiveTab(toTab);
   };
 
   const handleLeaveDiscard = () => {
     dirtyRef.current = false;
-    dirtyDescRef.current = "";
+    dirtyDescRef.current = [];
     const toTab = leavePopup?.toTab;
     setLeavePopup(null);
     if (toTab) setActiveTab(toTab);
@@ -324,12 +331,14 @@ export default function OperatingLayer({ state, member, onGoToL2, onMarkComplete
   // Expose dirty setter to child tabs via prop
   const setDirty = useCallback((desc) => {
     dirtyRef.current = true;
-    dirtyDescRef.current = desc || "field edits";
+    if (desc && !dirtyDescRef.current.includes(desc)) {
+      dirtyDescRef.current = [...dirtyDescRef.current, desc];
+    }
   }, []);
 
   const clearDirty = useCallback(() => {
     dirtyRef.current = false;
-    dirtyDescRef.current = "";
+    dirtyDescRef.current = [];
   }, []);
 
   const sharedProps = {

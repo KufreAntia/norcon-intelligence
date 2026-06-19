@@ -22,14 +22,19 @@ const Field = ({label, value}) => (
   </div>
 );
 
-// Editable baseline field — fires onBaselineBlur on change + blur
-function BaselineField({ label, value, fieldName, elementId, elementType, onBaselineBlur, multiline }) {
+// Editable baseline field — accumulates dirty state on blur, no immediate CCR popup
+function BaselineField({ label, value, fieldName, onSetDirty, multiline }) {
   const [localVal, setLocalVal] = useState(value||"");
   const [original]              = useState(value||"");
 
   const handleBlur = () => {
     if (String(localVal) !== String(original)) {
-      onBaselineBlur?.(elementType, elementId, fieldName, original, localVal, label);
+      const labels = {
+        startDate:"Start Date", endDate:"End Date", budget:"Budget",
+        purpose:"Purpose", withinScope:"Within Scope", outOfScope:"Out of Scope",
+      };
+      const lbl = labels[fieldName] || label;
+      onSetDirty?.(`${lbl}: "${original}" → "${localVal}"`);
     }
   };
 
@@ -55,8 +60,11 @@ function BaselineField({ label, value, fieldName, elementId, elementType, onBase
   );
 }
 
-export default function L3Home({ charter, stakeholders, teamMembers, isPM, onGoToL2, onBaselineBlur }) {
+export default function L3Home({ charter, stakeholders, teamMembers, isPM, onGoToL2, onBaselineBlur, onSetDirty }) {
   const [sub, setSub] = useState("Project Brief");
+
+  // Pass onSetDirty down; fall back gracefully if neither prop present
+  const handleDirty = onSetDirty || onBaselineBlur;
 
   return (
     <div style={{ padding:20 }}>
@@ -85,14 +93,11 @@ export default function L3Home({ charter, stakeholders, teamMembers, isPM, onGoT
             </Card>
             <Card>
               <SectionTitle>Timeline & Budget</SectionTitle>
-              {onBaselineBlur ? (
+              {handleDirty ? (
                 <>
-                  <BaselineField label="Start Date" value={charter.startDate} fieldName="startDate"
-                    elementId="charter" elementType="charter" onBaselineBlur={onBaselineBlur}/>
-                  <BaselineField label="End Date" value={charter.endDate} fieldName="endDate"
-                    elementId="charter" elementType="charter" onBaselineBlur={onBaselineBlur}/>
-                  <BaselineField label="Budget" value={charter.budget} fieldName="budget"
-                    elementId="charter" elementType="charter" onBaselineBlur={onBaselineBlur}/>
+                  <BaselineField label="Start Date" value={charter.startDate} fieldName="startDate" onSetDirty={handleDirty}/>
+                  <BaselineField label="End Date"   value={charter.endDate}   fieldName="endDate"   onSetDirty={handleDirty}/>
+                  <BaselineField label="Budget"     value={charter.budget}    fieldName="budget"    onSetDirty={handleDirty}/>
                 </>
               ) : (
                 <>
@@ -114,9 +119,9 @@ export default function L3Home({ charter, stakeholders, teamMembers, isPM, onGoT
 
             <Card style={{ gridColumn:"1/-1" }}>
               <SectionTitle>Purpose</SectionTitle>
-              {onBaselineBlur ? (
+              {handleDirty ? (
                 <BaselineField label="Purpose" value={charter.purpose} fieldName="purpose"
-                  elementId="charter" elementType="charter" onBaselineBlur={onBaselineBlur} multiline/>
+                  onSetDirty={handleDirty} multiline/>
               ) : (
                 <div style={{ fontSize:13, color:C.sage, lineHeight:1.6 }}>{charter.purpose||"—"}</div>
               )}
@@ -133,18 +138,18 @@ export default function L3Home({ charter, stakeholders, teamMembers, isPM, onGoT
             <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>
               <Card>
                 <SectionTitle>Within Scope</SectionTitle>
-                {onBaselineBlur ? (
+                {handleDirty ? (
                   <BaselineField label="Within Scope" value={(charter.withinScope||[]).join("\n")} fieldName="withinScope"
-                    elementId="charter" elementType="charter" onBaselineBlur={onBaselineBlur} multiline/>
+                    onSetDirty={handleDirty} multiline/>
                 ) : (
                   (charter.withinScope||[]).map((s,i) => <div key={i} style={{ fontSize:12, color:C.dim, marginBottom:4 }}>✓ {s}</div>)
                 )}
               </Card>
               <Card>
                 <SectionTitle>Out of Scope</SectionTitle>
-                {onBaselineBlur ? (
+                {handleDirty ? (
                   <BaselineField label="Out of Scope" value={(charter.outOfScope||[]).join("\n")} fieldName="outOfScope"
-                    elementId="charter" elementType="charter" onBaselineBlur={onBaselineBlur} multiline/>
+                    onSetDirty={handleDirty} multiline/>
                 ) : (
                   (charter.outOfScope||[]).map((s,i) => <div key={i} style={{ fontSize:12, color:C.muted, marginBottom:4 }}>✕ {s}</div>)
                 )}
@@ -231,7 +236,7 @@ export default function L3Home({ charter, stakeholders, teamMembers, isPM, onGoT
           <Card>
             <SectionTitle>Change Control Process</SectionTitle>
             <div style={{ display:"flex", gap:8, overflowX:"auto" }}>
-              {[["1","Detect","Edit scope / time / cost"],["2","Pop-up","Submit Change Request"],["3","CCR Created","Routed to Reviewer"],["4","PM Reviews","Checks impacted elements"],["5","Sponsor","Signs off baseline"],["6","Goes Live","All team notified"]].map(([n,t,d])=>(
+              {[["1","Detect","Edit scope / time / cost"],["2","Navigate away","Leave-page prompt appears"],["3","CCR Created","Routed to Reviewer"],["4","PM Reviews","Checks impacted elements"],["5","Sponsor","Signs off baseline"],["6","Goes Live","All team notified"]].map(([n,t,d])=>(
                 <div key={n} style={{ background:C.surface2, borderRadius:6, padding:"8px 10px", minWidth:100, flexShrink:0 }}>
                   <div style={{ fontSize:9, color:C.accentL, fontWeight:700, marginBottom:2 }}>Step {n}</div>
                   <div style={{ fontSize:11, color:C.sage, fontWeight:600, marginBottom:2 }}>{t}</div>

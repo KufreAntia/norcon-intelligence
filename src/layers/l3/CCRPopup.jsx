@@ -74,14 +74,28 @@ export default function CCRPopup({ change, existingCCRs, onSubmit, onAddToExisti
             <div style={{ fontSize:10, fontWeight:700, color:C.muted, textTransform:"uppercase", letterSpacing:".5px", marginBottom:8 }}>
               Change Details (Auto-generated)
             </div>
-            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8, fontSize:12 }}>
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8, fontSize:12, marginBottom:8 }}>
               <div><span style={{ color:C.muted }}>Date: </span><span style={{ color:C.sage }}>{change.date}</span></div>
               <div><span style={{ color:C.muted }}>Requested by: </span><span style={{ color:C.sage }}>{change.requestedBy}</span></div>
             </div>
-            <div style={{ marginTop:8, fontSize:12 }}>
-              <span style={{ color:C.muted }}>Change: </span>
-              <span style={{ color:C.sage }}>{change.description}</span>
-            </div>
+            {change.changeList && change.changeList.length > 1 ? (
+              <div>
+                <div style={{ fontSize:10, color:C.muted, marginBottom:5 }}>Changes made ({change.changeList.length}):</div>
+                <div style={{ display:"flex", flexDirection:"column", gap:3, maxHeight:100, overflowY:"auto" }}>
+                  {change.changeList.map((c,i) => (
+                    <div key={i} style={{ fontSize:11, color:C.dim, background:"rgba(255,255,255,0.03)",
+                      borderRadius:4, padding:"3px 8px", borderLeft:`2px solid ${C.border}` }}>
+                      {c}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <div style={{ fontSize:12 }}>
+                <span style={{ color:C.muted }}>Change: </span>
+                <span style={{ color:C.sage }}>{change.description}</span>
+              </div>
+            )}
           </div>
 
           {/* Impact checkboxes */}

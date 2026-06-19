@@ -250,7 +250,7 @@ function GanttSVG({ items, gStart, gEnd, phases, baselineItems }) {
 }
 
 // ── Main component ────────────────────────────────────────────────────────────
-export default function L3IntegratedBaseline({ state, activities, milestones, member, onStateChange, onBaselineBlur, baseline, onMarkComplete, sustainConfig, setSustainPrompt }) {
+export default function L3IntegratedBaseline({ state, activities, milestones, member, onStateChange, onBaselineBlur, onSetDirty, baseline, onMarkComplete, sustainConfig, setSustainPrompt }) {
   const canEdit  = member?.isPM || member?.canApprove;
   const loginCode = member?.loginCode;
 
@@ -325,7 +325,7 @@ export default function L3IntegratedBaseline({ state, activities, milestones, me
     preFocusValue.current[`${taskId}_${field}`] = currentVal;
   }, []);
 
-  // onBlur: compare against pre-focus value — state may have already updated via onChange
+  // onBlur: compare against pre-focus value — accumulate as dirty, no immediate CCR popup
   const handleDateBlur = useCallback((taskId, itemType, field, newVal) => {
     if (!newVal) return;
     const key    = `${taskId}_${field}`;
@@ -334,9 +334,13 @@ export default function L3IntegratedBaseline({ state, activities, milestones, me
     if (String(newVal) !== String(oldVal)) {
       const items  = itemType === "milestone" ? milestones : activities;
       const name   = items.find(i => i._id === taskId)?.name || taskId;
-      onBaselineBlur?.(itemType, taskId, field, oldVal, newVal, name);
+      const fieldLabel = field === "startDate" ? "Start Date" : "Target Date";
+      const typeLabel  = itemType === "milestone" ? "Milestone" : "Activity";
+      // Accumulate dirty description — CCR popup fires on tab leave, not here
+      const notify = onSetDirty || onBaselineBlur;
+      notify?.(`${typeLabel} "${name}" ${fieldLabel}: "${oldVal}" → "${newVal}"`);
     }
-  }, [activities, milestones, onBaselineBlur]);
+  }, [activities, milestones, onSetDirty, onBaselineBlur]);
 
   // ── Cost editing ──────────────────────────────────────────────────────────
   const updateCost = useCallback((id, field, val) => {
