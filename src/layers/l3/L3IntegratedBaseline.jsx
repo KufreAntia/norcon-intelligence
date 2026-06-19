@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo, useRef } from "react";
+import { useState, useCallback, useRef, useMemo, useRef } from "react";
 
 const C = {
   surface:"#122E1E", surface2:"#183D28", border:"#1F4D34",
@@ -254,6 +254,9 @@ export default function L3IntegratedBaseline({ state, activities, milestones, me
   const canEdit  = member?.isPM || member?.canApprove;
   const loginCode = member?.loginCode;
 
+  // Store old values before the PM starts editing, so blur can compare correctly
+  const preFocusValue = useRef({});
+
   // Task filter — mirrors what Tasks tab had
   const [taskFilter, setTaskFilter] = useState("all");
 
@@ -317,14 +320,21 @@ export default function L3IntegratedBaseline({ state, activities, milestones, me
     });
   }, [sheets, saveSheet03]);
 
-  // onBlur: fire CCR popup only once the PM has finished editing and leaves the field
+  // onFocus: capture the old value before any editing begins
+  const handleDateFocus = useCallback((taskId, field, currentVal) => {
+    preFocusValue.current[`${taskId}_${field}`] = currentVal;
+  }, []);
+
+  // onBlur: compare against pre-focus value — state may have already updated via onChange
   const handleDateBlur = useCallback((taskId, itemType, field, newVal) => {
     if (!newVal) return;
-    const oldItems = itemType === "milestone" ? milestones : activities;
-    const old      = oldItems.find(i => i._id === taskId);
-    const oldVal   = old?.[field] || "";
-    if (newVal !== oldVal) {
-      onBaselineBlur?.(itemType, taskId, field, oldVal, newVal, old?.name || taskId);
+    const key    = `${taskId}_${field}`;
+    const oldVal = preFocusValue.current[key] ?? (      (itemType === "milestone" ? milestones : activities).find(i => i._id === taskId)?.[field] || ""    );
+    delete preFocusValue.current[key];
+    if (String(newVal) !== String(oldVal)) {
+      const items  = itemType === "milestone" ? milestones : activities;
+      const name   = items.find(i => i._id === taskId)?.name || taskId;
+      onBaselineBlur?.(itemType, taskId, field, oldVal, newVal, name);
     }
   }, [activities, milestones, onBaselineBlur]);
 
@@ -481,10 +491,12 @@ export default function L3IntegratedBaseline({ state, activities, milestones, me
                         {/* Dates */}
                         <div style={{ width: W_DATE, display: "flex", flexDirection: "column", justifyContent: "center", borderRight: `1px solid ${C.border}22`, flexShrink: 0, padding: "2px 4px", gap: 2 }}>
                           <input type="date" value={item.startDate || ""} disabled={!canEdit} style={dateInp}
+                            onFocus={e => handleDateFocus(item._id, "startDate", e.target.value)}
                             onChange={e => updateItemDate(item._id, item.itemType, "startDate", e.target.value)}
                             onBlur={e => handleDateBlur(item._id, item.itemType, "startDate", e.target.value)} />
                           {!isMile
                             ? <input type="date" value={item.targetDate || ""} disabled={!canEdit} style={dateInp}
+                                onFocus={e => handleDateFocus(item._id, "targetDate", e.target.value)}
                                 onChange={e => updateItemDate(item._id, item.itemType, "targetDate", e.target.value)}
                                 onBlur={e => handleDateBlur(item._id, item.itemType, "targetDate", e.target.value)} />
                             : <span style={{ fontSize: 9, color: C.muted, paddingLeft: 2 }}>milestone</span>

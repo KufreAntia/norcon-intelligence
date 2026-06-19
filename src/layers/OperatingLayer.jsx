@@ -468,9 +468,11 @@ export default function OperatingLayer({ state, member, onGoToL2, onMarkComplete
         <CCRPopup
           change={ccrPending}
           approvers={approvers}
+          existingCCRs={changes}
           onSubmit={handleCCRSubmit}
+          onAddToExisting={handleAddToExistingCCR}
           onMinor={handleCCRMinor}
-          onClose={()=>setCcrPending(null)}/>
+          onCancel={()=>setCcrPending(null)}/>
       )}
 
       {/* Leave-page popup */}
