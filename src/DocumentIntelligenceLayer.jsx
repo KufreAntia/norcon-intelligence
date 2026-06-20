@@ -1,4 +1,4 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react"; // FIX 8: added useEffect
 import mammoth from "mammoth";
 
 const C = {
@@ -210,7 +210,7 @@ function CharterPanel({ charter }){
   );
 }
 
-// ── Main component ──────────────────────────────────────────────────────────
+// ── Main component ───────────────────────────────────────────────────────────────────────────
 export default function DocumentIntelligenceLayer({ onSendToPersonalisation, onStartExtraction, onExtractionError }){
   const [inputTab,  setInputTab]  = useState("upload");
   const [viewTab,   setViewTab]   = useState("all");
@@ -225,7 +225,12 @@ export default function DocumentIntelligenceLayer({ onSendToPersonalisation, onS
   const [elements,  setElements]  = useState([]);
   const [toast,     setToast]     = useState(null);
   const [dragover,  setDragover]  = useState(false);
-  const fileRef = useRef();
+  const fileRef           = useRef();
+  // FIX 8: store auto-advance timer ID so the useEffect cleanup below cancels
+  // it if the component unmounts before the 1.8 s delay fires, preventing
+  // onSendToPersonalisation from being called on an unmounted component.
+  const autoAdvanceTimer  = useRef(null);
+  useEffect(() => () => clearTimeout(autoAdvanceTimer.current), []);
 
   const isReady = (inputTab==="upload" && file) || (inputTab==="paste" && pasteText.trim().length > 20);
 
@@ -254,7 +259,7 @@ export default function DocumentIntelligenceLayer({ onSendToPersonalisation, onS
 
   const stageIdx = STAGES.indexOf(stage);
 
-  // ── Extraction ────────────────────────────────────────────────────────────
+  // ── Extraction ─────────────────────────────────────────────────────────────────────────────
   const runAnalysis = async () => {
     setLoading(true);
     setStage("ingest");
@@ -308,13 +313,13 @@ MODE 2 — RECOMMENDATION: Where standard project elements are logically expecte
 
 Return ONLY the JSON — no markdown, no backticks, no explanation, no text before or after.
 
-═══════════════════════════════════════════
+═══════════════════════════════════════════════
 INTELLIGENCE RULES
-═══════════════════════════════════════════
+═══════════════════════════════════════════════
 
-═══════════════════════════════════════════
+═══════════════════════════════════════════════
 PROJECT MANAGEMENT HIERARCHY — CRITICAL
-═══════════════════════════════════════════
+═══════════════════════════════════════════════
 
 You must understand and strictly apply the NorCon project management hierarchy. Confusing these levels is the most common error — read carefully.
 
@@ -384,9 +389,9 @@ TEAM:
 - Extract any named individuals with roles.
 - Infer expected roles if not named (e.g. "a Project Manager will be needed", "a Communications Lead is implied by the stakeholder engagement requirements").
 
-═══════════════════════════════════════════
+═══════════════════════════════════════════════
 JSON SCHEMA
-═══════════════════════════════════════════
+═══════════════════════════════════════════════
 
 {
   "charter": {
@@ -488,9 +493,9 @@ JSON SCHEMA
   ]
 }
 
-═══════════════════════════════════════════
+═══════════════════════════════════════════════
 GOVERNANCE RULES
-═══════════════════════════════════════════
+═══════════════════════════════════════════════
 - Tier 1 — Sponsor: scope, budget, strategic decisions, programme milestones
 - Tier 2 — Mentor / Assessor: assurance, quality gates, programme alignment
 - Tier 3 — Project Manager: risks, issues, change control, team management
@@ -528,9 +533,10 @@ DOCUMENT:
       setElements(els);
       setStage("review");
       setLoading(false);
-      // Auto-advance to Personalisation Layer after short delay
+      // FIX 8: store timer ID so the useEffect cleanup can cancel it if the
+      // component unmounts before the 1.8 s auto-advance fires.
       if (onSendToPersonalisation) {
-        setTimeout(() => {
+        autoAdvanceTimer.current = setTimeout(() => {
           onSendToPersonalisation(parsed.charter || null, els.filter(e => e._state !== "rejected"));
         }, 1800);
       }
@@ -543,7 +549,7 @@ DOCUMENT:
     }
   };
 
-  // ── Export ────────────────────────────────────────────────────────────────
+  // ── Export ──────────────────────────────────────────────────────────────────────────────────
   const exportRegister = () => {
     const lines = [];
     const c = charter || {};
@@ -606,7 +612,7 @@ DOCUMENT:
     URL.revokeObjectURL(url);
   };
 
-  // ── Render ────────────────────────────────────────────────────────────────
+  // ── Render ──────────────────────────────────────────────────────────────────────────────────
   return (
     <div style={{ background:C.bg, color:C.sage, fontFamily:"-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif",
       fontSize:13, minHeight:"100vh", display:"flex", flexDirection:"column", overflow:"hidden" }}>

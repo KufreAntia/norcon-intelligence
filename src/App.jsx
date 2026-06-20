@@ -46,7 +46,9 @@ export default function App() {
     } catch(e) { /* ignore */ }
   }, [state, member, screen]);
 
-  // Auto-save to Redis whenever state changes and we have a project code
+  // FIX 7: added saveState to dependency array — previously missing, which meant
+  // the effect closed over a stale saveState reference from the first render.
+  // Auto-save to Redis whenever state changes and we have a project code.
   useEffect(() => {
     const code = state.project?.code;
     if (!code || screen !== "app") return;
@@ -54,7 +56,7 @@ export default function App() {
     saveTimer.current = setTimeout(() => {
       saveState(code, state);
     }, 2000);
-  }, [state, screen]);
+  }, [state, screen, saveState]);
 
   // ── Auth handlers ──────────────────────────────────────────────────────
   const handleCreateNew = useCallback(() => {
@@ -63,15 +65,18 @@ export default function App() {
     setScreen("app");
   }, []);
 
+  // FIX 5: merged two setState calls into one to eliminate the double-update.
+  // The second functional updater (prev => ...) was redundant and could race
+  // with the first in React 18 batching. activeLayer: "L3" is now set in the
+  // single setState call alongside result.state.
   const handleLogin = useCallback(async (projectCode, memberCode) => {
     const result = await authenticate(projectCode, memberCode);
-    setState(result.state);
+    setState({ ...result.state, activeLayer: "L3" });
     setMember(result.member);
     setScreen("app");
-    setState(prev => ({ ...prev, activeLayer: "L3" }));
   }, [authenticate]);
 
-  // ── Layer 1 handlers ───────────────────────────────────────────────────
+  // ── Layer 1 handlers ─────────────────────────────────────────────────────
   const handleL1Start = useCallback(() => {
     setExtStatus("running");
     setExtMsg("Extracting project elements in the background...");
@@ -183,7 +188,7 @@ export default function App() {
     setExtMsg("⚠ Extraction failed: " + msg);
   }, []);
 
-  // ── Layer 2 handlers ───────────────────────────────────────────────────
+  // ── Layer 2 handlers ─────────────────────────────────────────────────────
   const handleSetupComplete = useCallback(({ project, loginCodes }) => {
     setState(prev => ({ ...prev, project, l2:{ ...prev.l2, loginCodes, currentSheet:"02" } }));
   }, []);
@@ -207,7 +212,7 @@ export default function App() {
     setState(prev => ({ ...prev, l2:{ ...prev.l2, currentSheet:sheetId } }));
   }, []);
 
-  // ── Layer 3 handlers ───────────────────────────────────────────────────
+  // ── Layer 3 handlers ─────────────────────────────────────────────────────
   const handleMarkComplete = useCallback((taskId, itemType, complete=true) => {
     setState(prev => {
       const sheet     = "03";
@@ -259,7 +264,7 @@ export default function App() {
     setState(prev => ({ ...prev, activeLayer:"L3" }));
   }, []);
 
-  // ── Confirm baseline — called from Dashboard banner ────────────────────────
+  // ── Confirm baseline — called from Dashboard banner ────────────────────────────────────────────
   const handleConfirmBaseline = useCallback((loginCode) => {
     setState(prev => {
       const sheets   = prev.l2.sheets;
@@ -284,7 +289,7 @@ export default function App() {
     });
   }, []);
 
-  // ── Apply approved CCR to current plan — PM confirms manually ────────────
+  // ── Apply approved CCR to current plan — PM confirms manually ────────────────────────────
   const handleApplyCCRToPlan = useCallback((ccrId, loginCode) => {
     setState(prev => {
       if (!prev.currentPlan) return prev;
@@ -327,7 +332,7 @@ export default function App() {
     setState(prev => ({ ...prev, activeLayer:layer }));
   }, []);
 
-  // ── Restoring splash ──────────────────────────────────────────────────
+  // ── Restoring splash ────────────────────────────────────────────────────
   if (restoring) {
     return (
       <div style={{ background:C.bg, color:C.sage, minHeight:"100vh", display:"flex", alignItems:"center", justifyContent:"center" }}>
@@ -341,7 +346,7 @@ export default function App() {
     return <LandingScreen onCreateNew={handleCreateNew} onLogin={handleLogin}/>;
   }
 
-  // ── App ────────────────────────────────────────────────────────────────
+  // ── App ─────────────────────────────────────────────────────────────────────────────
   const approvedCount = Object.values(state.l2.sheets).filter(s => s.locked).length;
   const l3Unlocked    = approvedCount > 0 && state.l2.loginCodes.length > 0;
 
