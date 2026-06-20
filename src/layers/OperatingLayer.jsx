@@ -300,6 +300,7 @@ export default function OperatingLayer({ state, member, onGoToL2, onMarkComplete
     });
     dirtyRef.current = false;
     dirtyDescRef.current = [];
+    dirtyRollbackRef.current = []; // rollbacks consumed — CCR submitted, not cancelled
     if (toTab) setActiveTab(toTab);
   };
 
@@ -330,10 +331,22 @@ export default function OperatingLayer({ state, member, onGoToL2, onMarkComplete
     if (toTab) setActiveTab(toTab);
   };
 
-  // Expose dirty setter to child tabs via prop
+  // Expose dirty setter to child tabs via prop.
+  // FIX BUG 2: __ROLLBACK__ prefixed entries are structural rollback payloads,
+  // not human-readable descriptions. Store them in a separate ref so the CCR
+  // cancel handler can revert each field change individually.
+  const dirtyRollbackRef = useRef([]);
   const setDirty = useCallback((desc) => {
+    if (!desc) return;
+    if (desc.startsWith("__ROLLBACK__")) {
+      try {
+        const payload = JSON.parse(desc.slice("__ROLLBACK__".length));
+        dirtyRollbackRef.current = [...dirtyRollbackRef.current, payload];
+      } catch { /* ignore malformed rollback */ }
+      return; // do not add to human-readable descriptions
+    }
     dirtyRef.current = true;
-    if (desc && !dirtyDescRef.current.includes(desc)) {
+    if (!dirtyDescRef.current.includes(desc)) {
       dirtyDescRef.current = [...dirtyDescRef.current, desc];
     }
   }, []);
@@ -341,6 +354,7 @@ export default function OperatingLayer({ state, member, onGoToL2, onMarkComplete
   const clearDirty = useCallback(() => {
     dirtyRef.current = false;
     dirtyDescRef.current = [];
+    dirtyRollbackRef.current = [];
   }, []);
 
   const sharedProps = {
@@ -497,7 +511,26 @@ export default function OperatingLayer({ state, member, onGoToL2, onMarkComplete
           onSubmit={handleCCRSubmit}
           onAddToExisting={handleAddToExistingCCR}
           onMinor={handleCCRMinor}
-          onCancel={()=>setCcrPending(null)}/>
+          onCancel={() => {
+            // FIX BUG 2: revert every date change that accumulated before the CCR popup
+            // by replaying each rollback payload through the same state path updateItemDate uses.
+            dirtyRollbackRef.current.forEach(({ taskId, itemType, field, oldVal }) => {
+              onStateChange(prev => {
+                const key = itemType === "milestone" ? "milestones" : "activities";
+                const d03 = prev.l2.sheets["03"]?.data || {};
+                const next = (d03[key] || []).map(i =>
+                  i._id === taskId ? { ...i, [field]: oldVal, _autoDate: false } : i
+                );
+                return { ...prev, l2: { ...prev.l2, sheets: { ...prev.l2.sheets,
+                  "03": { ...prev.l2.sheets["03"], data: { ...d03, [key]: next } }
+                }}};
+              });
+            });
+            dirtyRollbackRef.current = [];
+            dirtyRef.current = false;
+            dirtyDescRef.current = [];
+            setCcrPending(null);
+          }}/>
       )}
 
       {/* Leave-page popup */}

@@ -15,7 +15,7 @@ const PHASE_COLORS = {
 const ROW_H = 54;
 const DAY_W = 20;
 
-// ── Pure date utils ──────────────────────────────────────────────────────────
+// ── Pure date utils ─────────────────────────────────────────────────────────────────────────────
 function parseDate(s) {
   if (!s) return null;
   const d = new Date(s);
@@ -62,7 +62,7 @@ function autoDate(items) {
   });
 }
 
-// ── GanttSVG ─────────────────────────────────────────────────────────────────
+// ── GanttSVG ─────────────────────────────────────────────────────────────────────────────
 // Completely rewritten: week lines are a SINGLE overlay, bars are rendered after backgrounds
 function GanttSVG({ items, gStart, gEnd, phases, baselineItems }) {
   const totalDays = Math.max(dBetween(gStart, gEnd), 60);
@@ -249,7 +249,7 @@ function GanttSVG({ items, gStart, gEnd, phases, baselineItems }) {
   );
 }
 
-// ── Main component ────────────────────────────────────────────────────────────
+// ── Main component ──────────────────────────────────────────────────────────────────────────────────
 export default function L3IntegratedBaseline({ state, activities, milestones, member, onStateChange, onBaselineBlur, onSetDirty, baseline, onMarkComplete, sustainConfig, setSustainPrompt }) {
   const canEdit  = member?.isPM || member?.canApprove;
   const loginCode = member?.loginCode;
@@ -291,7 +291,7 @@ export default function L3IntegratedBaseline({ state, activities, milestones, me
   const expLog = useMemo(() => sheets["03"]?.data?.expenditureLog || [], [sheets]);
   const [newExp, setNewExp] = useState({ activityId: "", date: "", amount: "", description: "", invoiceRef: "" });
 
-  // ── Single save function — all state updates go through here ─────────────
+  // ── Single save function — all state updates go through here ───────────
   const saveSheet03 = useCallback((patch) => {
     onStateChange(prev => ({
       ...prev,
@@ -308,7 +308,7 @@ export default function L3IntegratedBaseline({ state, activities, milestones, me
     }));
   }, [onStateChange]);
 
-  // ── Date editing ─────────────────────────────────────────────────────────
+  // ── Date editing ─────────────────────────────────────────────────────────────────────────────
   // onChange: save date immediately so Gantt bar updates while typing
   const updateItemDate = useCallback((taskId, itemType, field, newVal) => {
     if (!newVal) return;
@@ -325,30 +325,38 @@ export default function L3IntegratedBaseline({ state, activities, milestones, me
     preFocusValue.current[`${taskId}_${field}`] = currentVal;
   }, []);
 
-  // onBlur: compare against pre-focus value — accumulate as dirty, no immediate CCR popup
+  // onBlur: compare against pre-focus value — accumulate as dirty, no immediate CCR popup.
+  // FIX BUG 2: alongside the human-readable dirty string, emit a structured __ROLLBACK__
+  // entry so OperatingLayer can revert the field if the CCR is cancelled.
+  // The rollback entry is JSON-encoded with a prefix so it travels through the existing
+  // onSetDirty(string) channel without changing the prop signature.
   const handleDateBlur = useCallback((taskId, itemType, field, newVal) => {
     if (!newVal) return;
     const key    = `${taskId}_${field}`;
     const oldVal = preFocusValue.current[key] ?? (      (itemType === "milestone" ? milestones : activities).find(i => i._id === taskId)?.[field] || ""    );
     delete preFocusValue.current[key];
     if (String(newVal) !== String(oldVal)) {
-      const items  = itemType === "milestone" ? milestones : activities;
-      const name   = items.find(i => i._id === taskId)?.name || taskId;
+      const itemList   = itemType === "milestone" ? milestones : activities;
+      const name       = itemList.find(i => i._id === taskId)?.name || taskId;
       const fieldLabel = field === "startDate" ? "Start Date" : "Target Date";
       const typeLabel  = itemType === "milestone" ? "Milestone" : "Activity";
-      // Accumulate dirty description — CCR popup fires on tab leave, not here
+      // Human-readable label for the leave-page popup
+      const label = `${typeLabel} "${name}" ${fieldLabel}: "${oldVal}" → "${newVal}"`;
+      // Structured rollback payload — OperatingLayer reads this on CCR cancel
+      const rollback = `__ROLLBACK__${JSON.stringify({ taskId, itemType, field, oldVal })}`;
       const notify = onSetDirty || onBaselineBlur;
-      notify?.(`${typeLabel} "${name}" ${fieldLabel}: "${oldVal}" → "${newVal}"`);
+      notify?.(label);
+      notify?.(rollback);
     }
   }, [activities, milestones, onSetDirty, onBaselineBlur]);
 
-  // ── Cost editing ──────────────────────────────────────────────────────────
+  // ── Cost editing ──────────────────────────────────────────────────────────────────────────
   const updateCost = useCallback((id, field, val) => {
     const next = { ...costData, [id]: { ...(costData[id] || {}), [field]: val } };
     saveSheet03({ costData: next });
   }, [costData, saveSheet03]);
 
-  // ── Expenditure log ───────────────────────────────────────────────────────
+  // ── Expenditure log ─────────────────────────────────────────────────────────────────────────────
   const syncActuals = useCallback((log, currentCostData) => {
     const sums = {};
     log.forEach(e => {
@@ -379,7 +387,7 @@ export default function L3IntegratedBaseline({ state, activities, milestones, me
     saveSheet03({ expenditureLog: nextLog, costData: nextCost });
   }, [expLog, costData, syncActuals, saveSheet03]);
 
-  // ── Build items ───────────────────────────────────────────────────────────
+  // ── Build items ──────────────────────────────────────────────────────────────────────────────────────
   const items = useMemo(() => {
     const raw = [
       ...activities.map(a => ({ ...a, itemType: "activity",  color: PHASE_COLORS[a.phase] || C.accentL })),
@@ -396,16 +404,29 @@ export default function L3IntegratedBaseline({ state, activities, milestones, me
     });
   }, [items]);
 
-  // ── Gantt range ───────────────────────────────────────────────────────────
+  // ── Gantt range ─────────────────────────────────────────────────────────────────────────────
+  // FIX BUG 1: include baseline snapshot dates alongside live item dates.
+  // Without this, ghost bars whose original date falls outside the live item range
+  // are clipped off-screen by xOf's max(0, ...) clamp and the SVG width limit.
   const { gStart, gEnd } = useMemo(() => {
-    const allD = items.flatMap(i => [i.startDate, i.targetDate].filter(Boolean).map(d => parseDate(d))).filter(Boolean);
+    const liveD = items.flatMap(i =>
+      [i.startDate, i.targetDate].filter(Boolean).map(d => parseDate(d))
+    ).filter(Boolean);
+
+    const baseD = [
+      ...(baseline?.snapshot?.activities || []),
+      ...(baseline?.snapshot?.milestones || []),
+    ].flatMap(b => [b.startDate, b.targetDate].filter(Boolean).map(d => parseDate(d)))
+      .filter(Boolean);
+
+    const allD = [...liveD, ...baseD];
     if (!allD.length) return { gStart: addDays(new Date(), -14), gEnd: addDays(new Date(), 90) };
     const minD = new Date(Math.min(...allD));
     const maxD = new Date(Math.max(...allD));
     return { gStart: addDays(minD, -7), gEnd: addDays(maxD, 21) };
-  }, [items]);
+  }, [items, baseline]);
 
-  // ── Cost overview data ────────────────────────────────────────────────────
+  // ── Cost overview data ────────────────────────────────────────────────────────────────────────────
   const { phaseSpend, maxBar, totalPlanned, totalActual } = useMemo(() => {
     const ps = phases.map(ph => {
       const its = items.filter(i => (i.phase || "Unassigned") === ph);
@@ -423,7 +444,7 @@ export default function L3IntegratedBaseline({ state, activities, milestones, me
     };
   }, [phases, items, costData, expLog]);
 
-  // ── Styles ────────────────────────────────────────────────────────────────
+  // ── Styles ──────────────────────────────────────────────────────────────────────────────────────────────────
   const inp      = { background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 4, color: C.sage, fontSize: 11, padding: "3px 6px", outline: "none", fontFamily: "inherit", boxSizing: "border-box", width: "100%" };
   const dateInp  = { ...inp, fontSize: 10, padding: "2px 4px", cursor: canEdit ? "pointer" : "default" };
   const TH       = { background: C.surface2, fontSize: 9, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: ".4px", padding: "0 8px", whiteSpace: "nowrap" };
@@ -433,7 +454,7 @@ export default function L3IntegratedBaseline({ state, activities, milestones, me
   const W_ACT    = 70;
   const W_DONE   = 42;
 
-  // ── Sync scroll refs ──────────────────────────────────────────────────────
+  // ── Sync scroll refs ─────────────────────────────────────────────────────────────────────────────────────
   const leftRef  = useRef(null);
   const rightRef = useRef(null);
   const syncLeft = () => { if (rightRef.current) rightRef.current.scrollTop = leftRef.current.scrollTop; };

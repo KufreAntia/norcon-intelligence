@@ -22,8 +22,9 @@ function Lbl({ c }) {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Risk card — collapsible, with all four management features
+// FIX BUG 3: added onClose prop for closure confirmation feedback
 // ─────────────────────────────────────────────────────────────────────────────
-function RiskCard({ risk, idx, canEdit, onUpdate, onRaiseCCR }) {
+function RiskCard({ risk, idx, canEdit, onUpdate, onRaiseCCR, onClose }) {
   const [open,     setOpen]     = useState(false);
   const [showReview, setShowReview] = useState(false);
   const [reviewNote, setReviewNote] = useState("");
@@ -37,7 +38,7 @@ function RiskCard({ risk, idx, canEdit, onUpdate, onRaiseCCR }) {
   const history = risk.reviewHistory || [];
   const isClosed = risk.status === "Closed";
 
-  // ── Add a review entry (score + note) ─────────────────────────────────────
+  // ── Add a review entry (score + note) ──────────────────────────────────────────────────
   const submitReview = () => {
     if (!reviewNote.trim()) return;
     const entry = {
@@ -54,17 +55,18 @@ function RiskCard({ risk, idx, canEdit, onUpdate, onRaiseCCR }) {
     setReviewNote(""); setShowReview(false);
   };
 
-  // ── Close risk ─────────────────────────────────────────────────────────────
+  // ── Close risk ──────────────────────────────────────────────────────────────────────────────────
   const closeRisk = () => {
-    onUpdate(idx, "status",    "Closed");
+    onUpdate(idx, "status",     "Closed");
     onUpdate(idx, "closedDate", toISO(new Date()));
+    onClose?.(risk.name || risk._id); // FIX BUG 3: notify parent for confirmation toast
   };
   const reopenRisk = () => {
     onUpdate(idx, "status",    "Open");
     onUpdate(idx, "closedDate", "");
   };
 
-  // ── Action items ───────────────────────────────────────────────────────────
+  // ── Action items ───────────────────────────────────────────────────────────────────────────────────
   const addAction = () => {
     if (!newAction.text.trim()) return;
     const next = [...actions, { ...newAction, id:`ACT-${String(actions.length+1).padStart(2,"0")}`, done:false }];
@@ -389,16 +391,17 @@ function CCRPrefillModal({ source, item, onConfirm, onClose }) {
 // Main component
 // ─────────────────────────────────────────────────────────────────────────────
 export default function L3Risks({ state, risks, member, onStateChange }) {
-  const [activeTab,  setActiveTab]  = useState("risks");
-  const [ccrSource,  setCcrSource]  = useState(null); // { type:"risk"|"issue", item }
+  const [activeTab,    setActiveTab]    = useState("risks");
+  const [ccrSource,    setCcrSource]    = useState(null); // { type:"risk"|"issue", item }
   const [filterClosed, setFilterClosed] = useState(false);
+  const [closeToast,   setCloseToast]   = useState(""); // FIX BUG 3: closure confirmation
 
   const canEdit = member?.isPM;
   const sheets  = state?.l2?.sheets || {};
   const issues  = sheets["05"]?.data?.issues || [];
   const changes = sheets["06"]?.data?.changes || [];
 
-  // ── Update a risk field in state ──────────────────────────────────────────
+  // ── Update a risk field in state ──────────────────────────────────────────────────────
   const updateRisk = useCallback((idx, field, val) => {
     onStateChange(prev => {
       const d05 = prev.l2.sheets["05"]?.data || {};
@@ -409,7 +412,7 @@ export default function L3Risks({ state, risks, member, onStateChange }) {
     });
   }, [onStateChange]);
 
-  // ── Update an issue field in state ────────────────────────────────────────
+  // ── Update an issue field in state ──────────────────────────────────────────────────────
   const updateIssue = useCallback((idx, field, val) => {
     onStateChange(prev => {
       const d05 = prev.l2.sheets["05"]?.data || {};
@@ -420,7 +423,7 @@ export default function L3Risks({ state, risks, member, onStateChange }) {
     });
   }, [onStateChange]);
 
-  // ── Add new issue ─────────────────────────────────────────────────────────
+  // ── Add new issue ──────────────────────────────────────────────────────────────────────────────
   const addIssue = useCallback(() => {
     onStateChange(prev => {
       const d05  = prev.l2.sheets["05"]?.data || {};
@@ -438,39 +441,68 @@ export default function L3Risks({ state, risks, member, onStateChange }) {
     });
   }, [onStateChange]);
 
-  // ── Raise CCR from risk or issue ──────────────────────────────────────────
+  // ── Raise CCR from risk or issue ──────────────────────────────────────────────────────────────────────
   const handleRaiseCCR = useCallback((type, item) => {
     setCcrSource({ type, item });
   }, []);
 
+  // FIX BUG 3: confirmCCR now:
+  // – uses max-suffix ID generation (no collision when records are deleted)
+  // – resolves reviewer and approver from state (no new props required)
+  // – includes an impacts array so CCR routing logic can process the request
+  // – uses correct date format matching the rest of the CCR log
   const confirmCCR = useCallback(({ desc, justif }) => {
     if (!ccrSource) return;
     const { type, item } = ccrSource;
     onStateChange(prev => {
-      const d06   = prev.l2.sheets["06"]?.data || {};
-      const curr  = d06.changes || [];
+      const d06       = prev.l2.sheets["06"]?.data || {};
+      const curr      = d06.changes || [];
+      const approvers = d06.approvers || [];
+
+      // Max-suffix ID — no collision when records are deleted
+      const major  = curr.filter(c => (c.id || "").startsWith("CCR-"));
+      const maxNum = major.reduce((max, c) => {
+        const n = parseInt((c.id || "").replace("CCR-", ""), 10);
+        return isNaN(n) ? max : Math.max(max, n);
+      }, 0);
+      const newId = `CCR-${String(maxNum + 1).padStart(3, "0")}`;
+
+      // Resolve reviewer and approver using same rights-based logic as OperatingLayer
+      const impacts  = type === "issue" ? ["Scope"] : ["Time"];
+      const reviewer = approvers.find(a => (a.rights || []).includes("reviewer"))
+                    || approvers.find(a => a.tier === "Tier 3 — Project Manager")
+                    || approvers[0] || null;
+      const approver = approvers.find(a => (a.rights || []).includes("approver"))
+                    || approvers.find(a => a.tier === "Tier 1 — Sponsor")
+                    || approvers[0] || null;
+
       const newCCR = {
-        id:           `CCR-${String(curr.filter(c=>c.type==="major").length+1).padStart(3,"0")}`,
-        type:         "major",
-        date:         toISO(new Date()),
-        status:       "pending",
-        priority:     type==="issue" ? "High" : "Medium",
-        description:  desc,
-        justification:justif,
-        requestedBy:  member?.loginCode || "PM",
-        linkedId:     item._id,
-        linkedType:   type,
-        oldValue:     "",
-        proposedValue:"",
+        id:            newId,
+        type:          "major",
+        date:          new Date().toLocaleDateString("en-GB"),
+        status:        "pending",
+        priority:      type === "issue" ? "High" : "Medium",
+        description:   desc,
+        justification: justif,
+        requestedBy:   member?.loginCode || "PM",
+        linkedId:      item._id,
+        linkedType:    type,
+        oldValue:      "",
+        proposedValue: "",
+        impacts,
+        reviewerCode:  reviewer?.loginCode || "",
+        reviewerName:  reviewer?.name      || reviewer?.role || "",
+        approverCode:  approver?.loginCode || "",
+        approverName:  approver?.name      || approver?.role || "",
       };
       return { ...prev, l2: { ...prev.l2, sheets: { ...prev.l2.sheets,
-        "06": { ...prev.l2.sheets["06"], data: { ...d06, changes:[...curr, newCCR] } }
+        "06": { ...prev.l2.sheets["06"], data: { ...d06, changes: [...curr, newCCR] } }
       }}};
     });
     setCcrSource(null);
   }, [ccrSource, member, onStateChange]);
 
-  // ── Filtered views ────────────────────────────────────────────────────────
+  // ── Filtered views ────────────────────────────────────────────────────────────────────────────
   const displayRisks = useMemo(() =>
     filterClosed ? risks : risks.filter(r => r.status !== "Closed"),
   [risks, filterClosed]);
@@ -487,7 +519,7 @@ export default function L3Risks({ state, risks, member, onStateChange }) {
 
       {/* Sub-nav */}
       <div style={{ background:C.surface, borderBottom:`1px solid ${C.border}`, display:"flex", alignItems:"center", padding:"0 20px", flexShrink:0 }}>
-        {[["risks",`Risks (${risks.length})`,"⚠️"],["issues",`Issues (${issues.length})`,"🚨"]].map(([id,label,icon]) => (
+        {[["risks",`Risks (${risks.length})`,"\u26A0\uFE0F"],["issues",`Issues (${issues.length})`,"\U0001F6A8"]].map(([id,label,icon]) => (
           <button key={id} onClick={() => setActiveTab(id)}
             style={{ display:"flex", alignItems:"center", gap:5, padding:"0 14px", height:38,
               fontSize:11, fontWeight:600, background:"none", border:"none",
@@ -518,6 +550,14 @@ export default function L3Risks({ state, risks, member, onStateChange }) {
         </div>
       </div>
 
+      {/* FIX BUG 3: closure confirmation toast */}
+      {closeToast && (
+        <div style={{ padding:"6px 20px", background:"rgba(58,224,162,0.08)", borderBottom:`1px solid ${C.activity}`,
+          fontSize:11, color:C.activity, flexShrink:0 }}>
+          ✓ {closeToast}
+        </div>
+      )}
+
       {/* Content */}
       <div style={{ flex:1, overflowY:"auto", padding:"16px 20px" }}>
 
@@ -538,6 +578,10 @@ export default function L3Risks({ state, risks, member, onStateChange }) {
                 canEdit={canEdit}
                 onUpdate={updateRisk}
                 onRaiseCCR={handleRaiseCCR}
+                onClose={name => {
+                  setCloseToast(`Risk "${name}" closed`);
+                  setTimeout(() => setCloseToast(""), 4000);
+                }}
               />
             ))}
             {displayRisks.length > 0 && (
