@@ -20,17 +20,34 @@ function Lbl({ c }) {
   return <div style={{ fontSize:9, fontWeight:700, color:C.muted, textTransform:"uppercase", letterSpacing:".4px", marginBottom:3 }}>{c}</div>;
 }
 
+// Owner select — populated from team names; falls back to a text input when no
+// team names are available (e.g. before L2 team sheet is complete).
+function OwnerSelect({ value, onChange, teamNames, placeholder }) {
+  if (!teamNames || teamNames.length === 0) {
+    return <input style={inp} value={value} onChange={e=>onChange(e.target.value)} placeholder={placeholder||"Owner"}/>;
+  }
+  return (
+    <select style={inp} value={value} onChange={e=>onChange(e.target.value)}>
+      <option value="">— owner —</option>
+      {teamNames.map(n => <option key={n} value={n} style={{background:C.surface2}}>{n}</option>)}
+    </select>
+  );
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Risk card — collapsible, with all four management features
 // FIX BUG 3: added onClose prop for closure confirmation feedback
+// ITEM 3: owner fields now use OwnerSelect dropdown
+// ITEM 4: delete button with inline confirmation
 // ─────────────────────────────────────────────────────────────────────────────
-function RiskCard({ risk, idx, canEdit, onUpdate, onRaiseCCR, onClose }) {
-  const [open,     setOpen]     = useState(false);
-  const [showReview, setShowReview] = useState(false);
-  const [reviewNote, setReviewNote] = useState("");
-  const [reviewL,    setReviewL]    = useState(risk.likelihood || "1 - Low");
-  const [reviewI,    setReviewI]    = useState(risk.impact     || "1 - Low");
-  const [newAction,  setNewAction]  = useState({ text:"", owner:"", dueDate:"", done:false });
+function RiskCard({ risk, idx, canEdit, onUpdate, onRaiseCCR, onClose, onDelete, teamNames }) {
+  const [open,          setOpen]          = useState(false);
+  const [showReview,    setShowReview]    = useState(false);
+  const [reviewNote,    setReviewNote]    = useState("");
+  const [reviewL,       setReviewL]       = useState(risk.likelihood || "1 - Low");
+  const [reviewI,       setReviewI]       = useState(risk.impact     || "1 - Low");
+  const [newAction,     setNewAction]     = useState({ text:"", owner:"", dueDate:"", done:false });
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
   const score   = (parseInt(risk.likelihood)||1) * (parseInt(risk.impact)||1);
   const rag     = ragColor(risk.likelihood, risk.impact);
@@ -112,7 +129,20 @@ function RiskCard({ risk, idx, canEdit, onUpdate, onRaiseCCR, onClose }) {
             <div><span style={{ color:C.muted }}>Likelihood: </span><span style={{ color:C.dim }}>{risk.likelihood||"—"}</span></div>
             <div><span style={{ color:C.muted }}>Impact: </span><span style={{ color:C.dim }}>{risk.impact||"—"}</span></div>
             <div><span style={{ color:C.muted }}>Response: </span>{risk.response && <Badge label={risk.response} color={C.accentL} small/>}</div>
-            <div><span style={{ color:C.muted }}>Owner: </span><span style={{ color:C.accentL }}>{risk._suggestedOwner||"—"}</span></div>
+            {/* ITEM 3: _suggestedOwner is now an editable dropdown */}
+            <div style={{ display:"flex", flexDirection:"column", gap:2 }}>
+              <span style={{ color:C.muted, fontSize:9, textTransform:"uppercase", letterSpacing:".3px" }}>Owner</span>
+              {canEdit ? (
+                <OwnerSelect
+                  value={risk._suggestedOwner||""}
+                  onChange={v => onUpdate(idx, "_suggestedOwner", v)}
+                  teamNames={teamNames}
+                  placeholder="— owner —"
+                />
+              ) : (
+                <span style={{ color:C.accentL }}>{risk._suggestedOwner||"—"}</span>
+              )}
+            </div>
             {risk.cause         && <div style={{ gridColumn:"1/-1" }}><span style={{ color:C.muted }}>Cause: </span><span style={{ color:C.dim }}>{risk.cause}</span></div>}
             {risk.potentialImpact && <div style={{ gridColumn:"1/-1" }}><span style={{ color:C.muted }}>Potential impact: </span><span style={{ color:C.dim }}>{risk.potentialImpact}</span></div>}
             {risk.mitigation    && <div style={{ gridColumn:"1/-1" }}><span style={{ color:C.muted }}>Mitigation: </span><span style={{ color:C.dim }}>{risk.mitigation}</span></div>}
@@ -142,9 +172,15 @@ function RiskCard({ risk, idx, canEdit, onUpdate, onRaiseCCR, onClose }) {
             ))}
 
             {canEdit && !isClosed && (
-              <div style={{ display:"grid", gridTemplateColumns:"1fr 100px 110px auto", gap:6, marginTop:8 }}>
+              <div style={{ display:"grid", gridTemplateColumns:"1fr 110px 110px auto", gap:6, marginTop:8 }}>
                 <input style={inp} value={newAction.text}    onChange={e=>setNewAction(p=>({...p,text:e.target.value}))}    placeholder="Action description"/>
-                <input style={inp} value={newAction.owner}   onChange={e=>setNewAction(p=>({...p,owner:e.target.value}))}   placeholder="Owner"/>
+                {/* ITEM 3: action owner is now a dropdown */}
+                <OwnerSelect
+                  value={newAction.owner}
+                  onChange={v=>setNewAction(p=>({...p,owner:v}))}
+                  teamNames={teamNames}
+                  placeholder="Owner"
+                />
                 <input style={inp} type="date" value={newAction.dueDate} onChange={e=>setNewAction(p=>({...p,dueDate:e.target.value}))}/>
                 <button onClick={addAction} style={{ padding:"4px 10px", background:C.accent, border:"none", borderRadius:4, color:"#fff", fontSize:11, cursor:"pointer", whiteSpace:"nowrap" }}>+ Add</button>
               </div>
@@ -211,9 +247,9 @@ function RiskCard({ risk, idx, canEdit, onUpdate, onRaiseCCR, onClose }) {
             }
           </div>
 
-          {/* ── SECTION 3: Close risk / Raise CCR ── */}
+          {/* ── SECTION 3: Close risk / Raise CCR / Delete ── */}
           {canEdit && (
-            <div style={{ borderTop:`1px solid ${C.border}`, paddingTop:10, display:"flex", gap:8, flexWrap:"wrap" }}>
+            <div style={{ borderTop:`1px solid ${C.border}`, paddingTop:10, display:"flex", gap:8, flexWrap:"wrap", alignItems:"center" }}>
               {!isClosed ? (
                 <>
                   <button onClick={closeRisk}
@@ -231,6 +267,28 @@ function RiskCard({ risk, idx, canEdit, onUpdate, onRaiseCCR, onClose }) {
                   ↩ Reopen Risk
                 </button>
               )}
+
+              {/* ITEM 4: delete with inline confirmation */}
+              <div style={{ marginLeft:"auto" }}>
+                {!confirmDelete ? (
+                  <button onClick={() => setConfirmDelete(true)}
+                    style={{ padding:"5px 10px", background:"none", border:`1px solid ${C.risk}44`, borderRadius:5, color:C.risk, fontSize:11, cursor:"pointer", opacity:0.7 }}>
+                    🗑 Delete
+                  </button>
+                ) : (
+                  <div style={{ display:"flex", gap:6, alignItems:"center" }}>
+                    <span style={{ fontSize:11, color:C.muted }}>Remove this risk?</span>
+                    <button onClick={() => { setConfirmDelete(false); onDelete(idx); }}
+                      style={{ padding:"4px 10px", background:C.risk, border:"none", borderRadius:4, color:"#fff", fontSize:11, fontWeight:700, cursor:"pointer" }}>
+                      Yes, delete
+                    </button>
+                    <button onClick={() => setConfirmDelete(false)}
+                      style={{ padding:"4px 8px", background:"none", border:`1px solid ${C.border}`, borderRadius:4, color:C.muted, fontSize:11, cursor:"pointer" }}>
+                      Cancel
+                    </button>
+                  </div>
+                )}
+              </div>
             </div>
           )}
         </div>
@@ -241,10 +299,13 @@ function RiskCard({ risk, idx, canEdit, onUpdate, onRaiseCCR, onClose }) {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Issue card — with action log and CCR link
+// ITEM 3: owner dropdown
+// ITEM 4: delete button with inline confirmation
 // ─────────────────────────────────────────────────────────────────────────────
-function IssueCard({ iss, idx, canEdit, onUpdate, onRaiseCCR }) {
-  const [open, setOpen] = useState(false);
-  const [newAction, setNewAction] = useState({ text:"", owner:"", dueDate:"" });
+function IssueCard({ iss, idx, canEdit, onUpdate, onRaiseCCR, onDelete, teamNames }) {
+  const [open,          setOpen]          = useState(false);
+  const [newAction,     setNewAction]     = useState({ text:"", owner:"", dueDate:"" });
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
   const sc      = statusColor(iss.status);
   const pc      = priorityColor(iss.priority);
@@ -283,7 +344,20 @@ function IssueCard({ iss, idx, canEdit, onUpdate, onRaiseCCR }) {
           <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8, marginBottom:12, fontSize:11 }}>
             {iss.cause         && <div><span style={{ color:C.muted }}>Cause: </span><span style={{ color:C.dim }}>{iss.cause}</span></div>}
             {iss.impact        && <div><span style={{ color:C.muted }}>Impact: </span><span style={{ color:C.dim }}>{iss.impact}</span></div>}
-            {iss.owner         && <div><span style={{ color:C.muted }}>Owner: </span><span style={{ color:C.accentL }}>{iss.owner}</span></div>}
+            {/* ITEM 3: owner is now an editable dropdown when PM is editing */}
+            <div style={{ display:"flex", flexDirection:"column", gap:2 }}>
+              <span style={{ color:C.muted, fontSize:9, textTransform:"uppercase", letterSpacing:".3px" }}>Owner</span>
+              {canEdit ? (
+                <OwnerSelect
+                  value={iss.owner||""}
+                  onChange={v => onUpdate(idx, "owner", v)}
+                  teamNames={teamNames}
+                  placeholder="— owner —"
+                />
+              ) : (
+                iss.owner ? <span style={{ color:C.accentL }}>{iss.owner}</span> : null
+              )}
+            </div>
             {iss.escalationPath && <div><span style={{ color:C.muted }}>Escalation: </span><span style={{ color:C.dim }}>{iss.escalationPath}</span></div>}
             {iss.raisedDate    && <div><span style={{ color:C.muted }}>Raised: </span><span style={{ color:C.muted }}>{iss.raisedDate}</span></div>}
           </div>
@@ -323,25 +397,57 @@ function IssueCard({ iss, idx, canEdit, onUpdate, onRaiseCCR }) {
             }
 
             {canEdit && (
-              <div style={{ display:"grid", gridTemplateColumns:"1fr 100px 110px auto", gap:6, marginTop:8 }}>
+              <div style={{ display:"grid", gridTemplateColumns:"1fr 110px 110px auto", gap:6, marginTop:8 }}>
                 <input style={inp} value={newAction.text}    onChange={e=>setNewAction(p=>({...p,text:e.target.value}))}    placeholder="Action taken or assigned"/>
-                <input style={inp} value={newAction.owner}   onChange={e=>setNewAction(p=>({...p,owner:e.target.value}))}   placeholder="Owner"/>
+                {/* ITEM 3: action log owner dropdown */}
+                <OwnerSelect
+                  value={newAction.owner}
+                  onChange={v=>setNewAction(p=>({...p,owner:v}))}
+                  teamNames={teamNames}
+                  placeholder="Owner"
+                />
                 <input style={inp} type="date" value={newAction.dueDate} onChange={e=>setNewAction(p=>({...p,dueDate:e.target.value}))}/>
                 <button onClick={addAction} style={{ padding:"4px 10px", background:C.accent, border:"none", borderRadius:4, color:"#fff", fontSize:11, cursor:"pointer", whiteSpace:"nowrap" }}>+ Log</button>
               </div>
             )}
           </div>
 
-          {/* ── Raise CCR ── */}
-          {canEdit && iss.status !== "Resolved" && (
-            <div style={{ borderTop:`1px solid ${C.border}`, paddingTop:10, display:"flex", gap:8 }}>
-              <button onClick={() => onRaiseCCR("issue", iss)}
-                style={{ padding:"5px 12px", background:"none", border:`1px solid ${C.milestone}`, borderRadius:5, color:C.milestone, fontSize:11, cursor:"pointer" }}>
-                ↗ Raise CCR from this issue
-              </button>
-              <span style={{ fontSize:10, color:C.muted, alignSelf:"center" }}>
-                Use when the issue requires a change to scope, cost, or schedule
-              </span>
+          {/* ── Raise CCR + Delete ── */}
+          {canEdit && (
+            <div style={{ borderTop:`1px solid ${C.border}`, paddingTop:10, display:"flex", gap:8, alignItems:"center", flexWrap:"wrap" }}>
+              {iss.status !== "Resolved" && (
+                <>
+                  <button onClick={() => onRaiseCCR("issue", iss)}
+                    style={{ padding:"5px 12px", background:"none", border:`1px solid ${C.milestone}`, borderRadius:5, color:C.milestone, fontSize:11, cursor:"pointer" }}>
+                    ↗ Raise CCR from this issue
+                  </button>
+                  <span style={{ fontSize:10, color:C.muted, alignSelf:"center" }}>
+                    Use when the issue requires a change to scope, cost, or schedule
+                  </span>
+                </>
+              )}
+
+              {/* ITEM 4: delete with inline confirmation */}
+              <div style={{ marginLeft:"auto" }}>
+                {!confirmDelete ? (
+                  <button onClick={() => setConfirmDelete(true)}
+                    style={{ padding:"5px 10px", background:"none", border:`1px solid ${C.risk}44`, borderRadius:5, color:C.risk, fontSize:11, cursor:"pointer", opacity:0.7 }}>
+                    🗑 Delete
+                  </button>
+                ) : (
+                  <div style={{ display:"flex", gap:6, alignItems:"center" }}>
+                    <span style={{ fontSize:11, color:C.muted }}>Remove this issue?</span>
+                    <button onClick={() => { setConfirmDelete(false); onDelete(idx); }}
+                      style={{ padding:"4px 10px", background:C.risk, border:"none", borderRadius:4, color:"#fff", fontSize:11, fontWeight:700, cursor:"pointer" }}>
+                      Yes, delete
+                    </button>
+                    <button onClick={() => setConfirmDelete(false)}
+                      style={{ padding:"4px 8px", background:"none", border:`1px solid ${C.border}`, borderRadius:4, color:C.muted, fontSize:11, cursor:"pointer" }}>
+                      Cancel
+                    </button>
+                  </div>
+                )}
+              </div>
             </div>
           )}
         </div>
@@ -351,7 +457,10 @@ function IssueCard({ iss, idx, canEdit, onUpdate, onRaiseCCR }) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// CCR pre-fill modal
+// CCR pre-fill modal — collects description + justification before handing off
+// to the main CCRPopup in OperatingLayer for impact / priority selection.
+// ITEM 2: button now calls onConfirm which triggers onTriggerCCR (main popup),
+// rather than writing directly to state.
 // ─────────────────────────────────────────────────────────────────────────────
 function CCRPrefillModal({ source, item, onConfirm, onClose }) {
   const [desc,   setDesc]   = useState(`${source==="risk"?"Risk":"Issue"} ${item._id}: ${item.name||""}`);
@@ -366,6 +475,7 @@ function CCRPrefillModal({ source, item, onConfirm, onClose }) {
         <div style={{ fontSize:13, fontWeight:700, color:C.sage, marginBottom:4 }}>Raise Change Request</div>
         <div style={{ fontSize:11, color:C.muted, marginBottom:16 }}>
           Linked to {source==="risk"?"Risk":"Issue"} <span style={{ fontFamily:"monospace", color:C.accentL }}>{item._id}</span>
+          <span style={{ marginLeft:8 }}>— review the pre-filled details and continue to select impact and priority.</span>
         </div>
         <div style={{ marginBottom:10 }}>
           <Lbl c="Description"/>
@@ -379,7 +489,7 @@ function CCRPrefillModal({ source, item, onConfirm, onClose }) {
           <button onClick={onClose} style={{ flex:1, padding:"8px", background:"none", border:`1px solid ${C.border}`, borderRadius:5, color:C.muted, fontSize:11, cursor:"pointer" }}>Cancel</button>
           <button onClick={() => onConfirm({ desc, justif })}
             style={{ flex:2, padding:"8px", background:C.accent, border:"none", borderRadius:5, color:"#fff", fontSize:12, fontWeight:700, cursor:"pointer" }}>
-            Create CCR → Change Control
+            Continue — select impact & priority →
           </button>
         </div>
       </div>
@@ -389,8 +499,10 @@ function CCRPrefillModal({ source, item, onConfirm, onClose }) {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Main component
+// ITEM 2: accepts onTriggerCCR from OperatingLayer (via sharedProps)
+// ITEM 3: accepts loginCodes for owner dropdowns
 // ─────────────────────────────────────────────────────────────────────────────
-export default function L3Risks({ state, risks, member, onStateChange }) {
+export default function L3Risks({ state, risks, member, onStateChange, loginCodes, onTriggerCCR }) {
   const [activeTab,    setActiveTab]    = useState("risks");
   const [ccrSource,    setCcrSource]    = useState(null); // { type:"risk"|"issue", item }
   const [filterClosed, setFilterClosed] = useState(false);
@@ -399,7 +511,11 @@ export default function L3Risks({ state, risks, member, onStateChange }) {
   const canEdit = member?.isPM;
   const sheets  = state?.l2?.sheets || {};
   const issues  = sheets["05"]?.data?.issues || [];
-  const changes = sheets["06"]?.data?.changes || [];
+
+  // Team names for owner dropdowns
+  const teamNames = useMemo(() =>
+    (loginCodes || []).map(m => m.name).filter(Boolean),
+  [loginCodes]);
 
   // ── Update a risk field in state ──────────────────────────────────────────────────────
   const updateRisk = useCallback((idx, field, val) => {
@@ -419,6 +535,28 @@ export default function L3Risks({ state, risks, member, onStateChange }) {
       const next = (d05.issues||[]).map((iss,i) => i===idx ? { ...iss, [field]:val } : iss);
       return { ...prev, l2: { ...prev.l2, sheets: { ...prev.l2.sheets,
         "05": { ...prev.l2.sheets["05"], data: { ...d05, issues:next } }
+      }}};
+    });
+  }, [onStateChange]);
+
+  // ITEM 4: delete a risk by index
+  const deleteRisk = useCallback((idx) => {
+    onStateChange(prev => {
+      const d05  = prev.l2.sheets["05"]?.data || {};
+      const next = (d05.risks || []).filter((_, i) => i !== idx);
+      return { ...prev, l2: { ...prev.l2, sheets: { ...prev.l2.sheets,
+        "05": { ...prev.l2.sheets["05"], data: { ...d05, risks: next } }
+      }}};
+    });
+  }, [onStateChange]);
+
+  // ITEM 4: delete an issue by index
+  const deleteIssue = useCallback((idx) => {
+    onStateChange(prev => {
+      const d05  = prev.l2.sheets["05"]?.data || {};
+      const next = (d05.issues || []).filter((_, i) => i !== idx);
+      return { ...prev, l2: { ...prev.l2, sheets: { ...prev.l2.sheets,
+        "05": { ...prev.l2.sheets["05"], data: { ...d05, issues: next } }
       }}};
     });
   }, [onStateChange]);
@@ -446,61 +584,30 @@ export default function L3Risks({ state, risks, member, onStateChange }) {
     setCcrSource({ type, item });
   }, []);
 
-  // FIX BUG 3: confirmCCR now:
-  // – uses max-suffix ID generation (no collision when records are deleted)
-  // – resolves reviewer and approver from state (no new props required)
-  // – includes an impacts array so CCR routing logic can process the request
-  // – uses correct date format matching the rest of the CCR log
-  const confirmCCR = useCallback(({ desc, justif }) => {
+  // ITEM 2: after the pre-fill modal confirms, hand off to the main CCRPopup
+  // in OperatingLayer via onTriggerCCR. The prefillJustification field is
+  // picked up by CCRPopup to initialise its justification textarea.
+  const handlePrefillConfirm = useCallback(({ desc, justif }) => {
     if (!ccrSource) return;
     const { type, item } = ccrSource;
-    onStateChange(prev => {
-      const d06       = prev.l2.sheets["06"]?.data || {};
-      const curr      = d06.changes || [];
-      const approvers = d06.approvers || [];
-
-      // Max-suffix ID — no collision when records are deleted
-      const major  = curr.filter(c => (c.id || "").startsWith("CCR-"));
-      const maxNum = major.reduce((max, c) => {
-        const n = parseInt((c.id || "").replace("CCR-", ""), 10);
-        return isNaN(n) ? max : Math.max(max, n);
-      }, 0);
-      const newId = `CCR-${String(maxNum + 1).padStart(3, "0")}`;
-
-      // Resolve reviewer and approver using same rights-based logic as OperatingLayer
-      const impacts  = type === "issue" ? ["Scope"] : ["Time"];
-      const reviewer = approvers.find(a => (a.rights || []).includes("reviewer"))
-                    || approvers.find(a => a.tier === "Tier 3 — Project Manager")
-                    || approvers[0] || null;
-      const approver = approvers.find(a => (a.rights || []).includes("approver"))
-                    || approvers.find(a => a.tier === "Tier 1 — Sponsor")
-                    || approvers[0] || null;
-
-      const newCCR = {
-        id:            newId,
-        type:          "major",
-        date:          new Date().toLocaleDateString("en-GB"),
-        status:        "pending",
-        priority:      type === "issue" ? "High" : "Medium",
-        description:   desc,
-        justification: justif,
-        requestedBy:   member?.loginCode || "PM",
-        linkedId:      item._id,
-        linkedType:    type,
-        oldValue:      "",
-        proposedValue: "",
-        impacts,
-        reviewerCode:  reviewer?.loginCode || "",
-        reviewerName:  reviewer?.name      || reviewer?.role || "",
-        approverCode:  approver?.loginCode || "",
-        approverName:  approver?.name      || approver?.role || "",
-      };
-      return { ...prev, l2: { ...prev.l2, sheets: { ...prev.l2.sheets,
-        "06": { ...prev.l2.sheets["06"], data: { ...d06, changes: [...curr, newCCR] } }
-      }}};
-    });
+    if (onTriggerCCR) {
+      onTriggerCCR({
+        elementType:          type,
+        elementId:            item._id,
+        fieldName:            type === "risk" ? "mitigation" : "resolution",
+        oldValue:             "",
+        newValue:             "",
+        elementName:          item.name || item._id,
+        description:          desc,
+        prefillJustification: justif,
+        date:                 new Date().toLocaleDateString("en-GB"),
+        requestedBy:          member?.loginCode || member?.name || "PM",
+        linkedId:             item._id,
+        linkedType:           type,
+      });
+    }
     setCcrSource(null);
-  }, [ccrSource, member, onStateChange]);
+  }, [ccrSource, member, onTriggerCCR]);
 
   // ── Filtered views ────────────────────────────────────────────────────────────────────────────
   const displayRisks = useMemo(() =>
@@ -517,9 +624,9 @@ export default function L3Risks({ state, risks, member, onStateChange }) {
   return (
     <div style={{ display:"flex", flexDirection:"column", flex:1, minHeight:0, overflow:"hidden" }}>
 
-      {/* Sub-nav */}
+      {/* Sub-nav — ITEM 5: emoji fixed from \U0001F6A8 (invalid JS escape) to literal 🚨 */}
       <div style={{ background:C.surface, borderBottom:`1px solid ${C.border}`, display:"flex", alignItems:"center", padding:"0 20px", flexShrink:0 }}>
-        {[["risks",`Risks (${risks.length})`,"\u26A0\uFE0F"],["issues",`Issues (${issues.length})`,"\U0001F6A8"]].map(([id,label,icon]) => (
+        {[["risks",`Risks (${risks.length})`,"⚠️"],["issues",`Issues (${issues.length})`,"🚨"]].map(([id,label,icon]) => (
           <button key={id} onClick={() => setActiveTab(id)}
             style={{ display:"flex", alignItems:"center", gap:5, padding:"0 14px", height:38,
               fontSize:11, fontWeight:600, background:"none", border:"none",
@@ -578,6 +685,8 @@ export default function L3Risks({ state, risks, member, onStateChange }) {
                 canEdit={canEdit}
                 onUpdate={updateRisk}
                 onRaiseCCR={handleRaiseCCR}
+                onDelete={deleteRisk}
+                teamNames={teamNames}
                 onClose={name => {
                   setCloseToast(`Risk "${name}" closed`);
                   setTimeout(() => setCloseToast(""), 4000);
@@ -611,6 +720,8 @@ export default function L3Risks({ state, risks, member, onStateChange }) {
                 canEdit={canEdit}
                 onUpdate={updateIssue}
                 onRaiseCCR={handleRaiseCCR}
+                onDelete={deleteIssue}
+                teamNames={teamNames}
               />
             ))}
             {canEdit && (
@@ -623,12 +734,13 @@ export default function L3Risks({ state, risks, member, onStateChange }) {
         )}
       </div>
 
-      {/* CCR prefill modal */}
+      {/* CCR prefill modal — step 1: description + justification.
+          Confirming this now triggers the main CCRPopup (impact + priority) via onTriggerCCR. */}
       {ccrSource && (
         <CCRPrefillModal
           source={ccrSource.type}
           item={ccrSource.item}
-          onConfirm={confirmCCR}
+          onConfirm={handlePrefillConfirm}
           onClose={() => setCcrSource(null)}
         />
       )}

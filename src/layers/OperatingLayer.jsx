@@ -369,6 +369,9 @@ export default function OperatingLayer({ state, member, onGoToL2, onMarkComplete
     onConfirmBaseline, onApplyCCRToPlan,
     sustainPrompt, setSustainPrompt,
     onSetDirty: setDirty, onClearDirty: clearDirty,
+    // ITEM 2: expose setCcrPending so L3Risks can surface the main CCRPopup
+    // after its pre-fill step, getting the full impact / priority flow.
+    onTriggerCCR: setCcrPending,
   };
 
   // FIX 22: removed dead `change: null` entry (Change Control is now a section
@@ -502,7 +505,7 @@ export default function OperatingLayer({ state, member, onGoToL2, onMarkComplete
         ) : null}
       </div>
 
-      {/* CCR Popup */}
+      {/* CCR Popup — shown for baseline edits AND for CCRs raised from Risks/Issues */}
       {ccrPending && (
         <CCRPopup
           change={ccrPending}

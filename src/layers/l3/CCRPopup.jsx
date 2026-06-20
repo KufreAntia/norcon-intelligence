@@ -13,8 +13,19 @@ const inp = {
   outline:"none", boxSizing:"border-box", fontFamily:"inherit",
 };
 
+// Impact colour map. "No Impact" uses a distinct muted-sage tone to signal
+// it is a positive explicit choice, not an unset state.
+const IMPACT_COLORS = {
+  Scope:     "#3a9962",
+  Time:      "#e0a23a",
+  Cost:      "#e05c5c",
+  Quality:   "#3a9ce0",
+  "No Impact": "#6a8c7a",
+};
+
 export default function CCRPopup({ change, existingCCRs, onSubmit, onAddToExisting, onMinor, onCancel }) {
-  const [justification, setJustification] = useState("");
+  // Pre-fill justification when the CCR was raised from a Risk or Issue
+  const [justification, setJustification] = useState(change?.prefillJustification || "");
   const [priority,      setPriority]      = useState("High");
   const [impacts,       setImpacts]       = useState([]);
   const [error,         setError]         = useState("");
@@ -26,13 +37,26 @@ export default function CCRPopup({ change, existingCCRs, onSubmit, onAddToExisti
     c.type === "major" && c.status !== "approved" && c.status !== "rejected"
   );
 
+  // "No Impact" is mutually exclusive with substantive impact areas.
   const toggleImpact = (imp) => {
-    setImpacts(prev => prev.includes(imp) ? prev.filter(i=>i!==imp) : [...prev, imp]);
+    setError("");
+    if (imp === "No Impact") {
+      // Selecting No Impact clears all other selections (and toggles itself)
+      setImpacts(prev => prev.includes("No Impact") ? [] : ["No Impact"]);
+    } else {
+      // Selecting any substantive impact removes No Impact
+      setImpacts(prev => {
+        const without = prev.filter(i => i !== "No Impact");
+        return without.includes(imp)
+          ? without.filter(i => i !== imp)
+          : [...without, imp];
+      });
+    }
   };
 
   const handleSubmit = () => {
     if (!justification.trim()) { setError("Please provide a justification for this change."); return; }
-    if (!impacts.length)       { setError("Please select at least one impact area."); return; }
+    if (!impacts.length)       { setError("Please select at least one impact area, or choose 'No Impact'."); return; }
     onSubmit({ justification, priority, impacts });
   };
 
@@ -98,23 +122,29 @@ export default function CCRPopup({ change, existingCCRs, onSubmit, onAddToExisti
             )}
           </div>
 
-          {/* Impact checkboxes */}
+          {/* Impact checkboxes — force selection, No Impact is mutually exclusive */}
           <div style={{ marginBottom:14 }}>
-            <div style={{ fontSize:11, fontWeight:700, color:C.dim, marginBottom:8, textTransform:"uppercase", letterSpacing:".4px" }}>
-              Impact Areas *
+            <div style={{ fontSize:11, fontWeight:700, color:C.dim, marginBottom:4, textTransform:"uppercase", letterSpacing:".4px" }}>
+              Impact Areas <span style={{ color:C.risk }}>*</span>
+            </div>
+            <div style={{ fontSize:10, color:C.muted, marginBottom:8 }}>
+              Select all that apply, or choose <em>No Impact</em> if this change does not affect any baseline dimension.
             </div>
             <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
               {IMPACT_OPTIONS.map(imp => {
                 const selected = impacts.includes(imp);
-                const colors = { Scope:C.accentL, Time:C.milestone, Cost:C.risk, Quality:"#3a9ce0" };
-                const col = colors[imp];
+                const col      = IMPACT_COLORS[imp];
+                const isNone   = imp === "No Impact";
                 return (
                   <button key={imp} onClick={() => toggleImpact(imp)}
                     style={{
                       padding:"6px 14px", borderRadius:20, fontSize:12, fontWeight:600,
                       border:`1px solid ${selected ? col : C.border}`,
                       background: selected ? col+"22" : "none",
-                      color: selected ? col : C.muted, cursor:"pointer",
+                      color: selected ? col : C.muted,
+                      cursor:"pointer",
+                      // Visual separator between substantive impacts and No Impact
+                      marginLeft: isNone ? "auto" : 0,
                     }}>
                     {imp}
                   </button>
@@ -148,7 +178,7 @@ export default function CCRPopup({ change, existingCCRs, onSubmit, onAddToExisti
           {/* Justification */}
           <div style={{ marginBottom:14 }}>
             <div style={{ fontSize:11, fontWeight:700, color:C.dim, marginBottom:6, textTransform:"uppercase", letterSpacing:".4px" }}>
-              Justification *
+              Justification <span style={{ color:C.risk }}>*</span>
             </div>
             <textarea
               value={justification}

@@ -8,7 +8,9 @@ export const BASELINE_FIELDS = {
   // Deliverable fields
   deliverable: ['target', 'deadlineV1'],
 };
-export const IMPACT_OPTIONS = ['Scope', 'Time', 'Cost', 'Quality'];
+// "No Impact" is mutually exclusive with the four substantive options —
+// selecting it signals the PM has considered impact and confirmed there is none.
+export const IMPACT_OPTIONS   = ['Scope', 'Time', 'Cost', 'Quality', 'No Impact'];
 export const PRIORITY_OPTIONS = ['High', 'Medium', 'Low'];
 
 // generateCCRId: derives next ID from the maximum existing CCR numeric suffix,
