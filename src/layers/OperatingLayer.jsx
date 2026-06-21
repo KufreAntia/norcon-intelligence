@@ -1,7 +1,7 @@
 import { useState, useCallback, useRef } from "react";
 import L3Home               from "./l3/L3Home.jsx";
 import L3Dashboard          from "./l3/L3Dashboard.jsx";
-import L3IntegratedBaseline from "./l3/IntegratedBaseline.jsx";
+import L3IntegratedBaseline from "./l3/L3IntegratedBaseline.jsx";
 import L3RACI               from "./l3/L3RACI.jsx";
 import L3Report             from "./l3/L3Report.jsx";
 import CCRPopup             from "./l3/CCRPopup.jsx";
