@@ -353,7 +353,7 @@ Write these sections in full:
   // RENDER — 2 × 2 grid
   // ─────────────────────────────────────────────────────────────────────────
   return (
-    <div style={{ flex:1, minHeight:0, display:"grid", gridTemplateColumns:"1fr 1fr", gridTemplateRows:"1fr 1fr", gap:12, padding:"12px 16px", overflow:"hidden" }}>
+    <div style={{ flex:1, minHeight:0, display:"grid", gridTemplateColumns:"1fr 1fr", gridTemplateRows:"65fr 35fr", gap:12, padding:"12px 16px", overflow:"hidden" }}>
 
       {/* ══ TOP-LEFT: CHANGE CONTROL ══ */}
       <GridCard title="Change Control" icon="🔄">
