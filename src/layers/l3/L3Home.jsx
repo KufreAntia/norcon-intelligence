@@ -159,9 +159,39 @@ export default function L3Home({ charter, stakeholders, teamMembers, isPM, onGoT
         </div>
       )}
 
-      {/* FIX 15: removed unreachable sub === "Stakeholders" block.
-          "Stakeholders" is not in SUB_PAGES so this could never render.
-          Stakeholder display is handled by L3Stakeholders.jsx as its own tab. */}
+      {sub === "Stakeholders" && (
+        <div style={{ maxWidth:900 }}>
+          {stakeholders.length === 0 && <div style={{ color:C.muted, fontSize:13 }}>No stakeholders recorded yet.</div>}
+          <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(260px,1fr))", gap:10 }}>
+            {stakeholders.map((s,i) => {
+              const ps = (((parseInt(s.power)||5)+(parseInt(s.influence)||5))/2*(parseInt(s.interest)||5)/10).toFixed(1);
+              return (
+                <Card key={i}>
+                  <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:8 }}>
+                    <div style={{ width:32, height:32, borderRadius:"50%", background:"rgba(156,110,224,0.15)",
+                      border:`1px solid ${C.stakeholder}`, display:"flex", alignItems:"center", justifyContent:"center", fontSize:14 }}>👤</div>
+                    <div>
+                      <div style={{ fontSize:13, fontWeight:700, color:C.sage }}>{s.name||"—"}</div>
+                      <div style={{ fontSize:10, color:C.muted }}>{s.category||"—"}</div>
+                    </div>
+                    <div style={{ marginLeft:"auto", fontSize:11, fontWeight:700, color:C.stakeholder }}>★ {ps}</div>
+                  </div>
+                  <Field label="Contact"             value={s.contact}/>
+                  <Field label="Engagement Strategy" value={s.engagementStrategy}/>
+                  <div style={{ display:"flex", gap:6, marginTop:6 }}>
+                    {[["P",s.power],["I",s.interest],["In",s.influence],["E",s.ease]].map(([l,v])=>(
+                      <div key={l} style={{ flex:1, textAlign:"center", background:C.surface2, borderRadius:5, padding:"4px 0" }}>
+                        <div style={{ fontSize:9, color:C.muted, textTransform:"uppercase" }}>{l}</div>
+                        <div style={{ fontSize:13, fontWeight:700, color:C.sage }}>{v||5}</div>
+                      </div>
+                    ))}
+                  </div>
+                </Card>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {sub === "Project Team" && (
         <div style={{ maxWidth:800 }}>
