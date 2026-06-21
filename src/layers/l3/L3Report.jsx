@@ -78,7 +78,7 @@ function buildProjectContext(state,project,charter,activities,milestones,risks,d
 function GridCard({ title, icon, children }) {
   return (
     <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:9,
-      display:"flex", flexDirection:"column", minHeight:0, overflow:"hidden" }}>
+      display:"flex", flexDirection:"column", height:"100%", minHeight:0, overflow:"hidden", boxSizing:"border-box" }}>
       <div style={{ display:"flex", alignItems:"center", gap:8, padding:"12px 16px",
         borderBottom:`1px solid ${C.border}`, flexShrink:0 }}>
         <span style={{ fontSize:15 }}>{icon}</span>
@@ -353,7 +353,7 @@ Write these sections in full:
   // RENDER — 2 × 2 grid
   // ─────────────────────────────────────────────────────────────────────────
   return (
-    <div style={{ flex:1, minHeight:0, display:"grid", gridTemplateColumns:"1fr 1fr", gridTemplateRows:"65fr 35fr", gap:12, padding:"12px 16px", overflow:"hidden" }}>
+    <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gridTemplateRows:"75% 25%", gap:12, padding:"12px 16px", overflow:"hidden", height:"100%", boxSizing:"border-box" }}>
 
       {/* ══ TOP-LEFT: CHANGE CONTROL ══ */}
       <GridCard title="Change Control" icon="🔄">
