@@ -24,7 +24,7 @@ const TIERS = {
     label: "Light",
     icon: "🌱",
     desc: "Essentials for simple projects — events, community initiatives, birthday planning.",
-    sheets: ["01","02","03","05","10"],
+    sheets: ["01","02","03","04","05","10"],
     l3Tabs: ["home","dashboard","baseline","raci","risks","sustain","report"],
     questions: [
       { id:"q1", text:"What is this project trying to achieve, and by when?",   fields:["projectName","purpose","endDate"] },
@@ -995,19 +995,27 @@ Choose from roles typical for this type of project. Max 6 suggestions. Do not in
     const ordered = ["Project Manager", ...selectedRoles.filter(r => r !== "Project Manager")];
     const { generateLoginCode } = await import("../store/appStore.js");
     const existingCodes = (l2?.loginCodes || []).map(m => m.loginCode);
+
+    // Pre-fill names from any already-extracted charter context
+    const charter = sheets["01"]?.data?.charter || {};
+    const knownNames = {
+      "Project Manager": charter.projectManager || "",
+      "Project Sponsor":  charter.projectSponsor  || "",
+    };
+
     const newMembers = ordered.map((role, i) => {
       const code = generateLoginCode(project?.code || "NC", [...existingCodes]);
       existingCodes.push(code);
       return {
-        _id: `TM-${String(i+1).padStart(3,"0")}`,
-        loginCode: code,
-        name: "",
+        _id:              `TM-${String(i+1).padStart(3,"0")}`,
+        loginCode:        code,
+        name:             knownNames[role] || "",
         role,
-        deliveryRole: "",
-        availability: "",
-        location: "",
+        deliveryRole:     "",
+        availability:     "",
+        location:         "",
         responsibilities: "",
-        isPM: role === "Project Manager",
+        isPM:             role === "Project Manager",
       };
     });
 
@@ -1017,13 +1025,59 @@ Choose from roles typical for this type of project. Max 6 suggestions. Do not in
       onSheetUpdate("02", { teamMembers: newMembers }, "ai-draft");
     }
 
+    // Write all generated login codes into l2.loginCodes so L3 can read them
+    newMembers.forEach(m => {
+      onSheetUpdate("__loginCode__", {}, "empty", {
+        loginCode: m.loginCode,
+        name:      m.name,
+        role:      m.role,
+        isPM:      m.isPM,
+      });
+    });
+
     // Write role list to charter as a hint
     const existingCharter = sheets["01"]?.data?.charter || {};
     if (!existingCharter.teamRoles) {
       onSheetUpdate("01", { charter: { ...existingCharter, teamRoles: ordered.join(", ") } }, "ai-draft");
     }
 
+    // If document context exists, ask AI to suggest names for blank roles
+    const hasDocContext = (sheets["03"]?.data?.activities||[]).length > 0 ||
+                          (sheets["05"]?.data?.risks||[]).length > 0 ||
+                          charter.purpose;
+    const blankRoles = ordered.filter(r => !knownNames[r]);
+
+    if (hasDocContext && blankRoles.length > 0) {
+      setAiStatus("Checking document context for team name suggestions…");
+      try {
+        const prompt = `A project manager is setting up a project team. Based on the project context below, suggest realistic placeholder names or leave blank if truly unknown.
+Project: ${charter.projectName || "Unknown"}
+Purpose: ${charter.purpose || "Not specified"}
+Known team: PM is ${charter.projectManager || "unknown"}, Sponsor is ${charter.projectSponsor || "unknown"}
+Roles needing names: ${blankRoles.join(", ")}
+
+Return ONLY valid JSON, no markdown:
+{"names":{"Role Name":"Suggested Name or empty string"}}
+Only suggest a name if you have reasonable context to infer it. Otherwise return empty string.`;
+
+        const raw = await callExtract([{ role:"user", content:prompt }], 400);
+        try {
+          const parsed = safeParseJSON(raw);
+          if (parsed.names) {
+            const updatedTeam = newMembers.map(m => ({
+              ...m,
+              name: m.name || parsed.names[m.role] || "",
+            }));
+            onSheetUpdate("02", { teamMembers: updatedTeam }, "ai-draft");
+          }
+        } catch(e) { /* ignore parse failure — blank names are fine */ }
+      } catch(e) { /* ignore AI failure */ }
+    }
+
     setAiStatus("");
+    // Navigate to Team sheet so PM sees the populated rows immediately
+    setActiveSheet("02");
+    onSheetNav("02");
     // Kick off Q&A now that roles are known
     if (qaMessages.length === 0) askQuestion(0);
   };
