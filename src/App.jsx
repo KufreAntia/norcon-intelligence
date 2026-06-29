@@ -8,18 +8,26 @@ import { useProjectPersistence } from "./store/useProjectPersistence.js";
 
 const C = { bg:"#0D2B1B", surface:"#122E1E", border:"#1F4D34", accent:"#2E7D52", accentL:"#3a9962", sage:"#E5F0E8", dim:"#8aac96", muted:"#5a7a66", risk:"#e05c5c" };
 
-const SESSION_KEY = "norcon_session_v1";
+const SESSION_KEY    = "norcon_session_v1";
+const LAST_LOGIN_KEY = "norcon_last_login";
 
 export default function App() {
   const [screen,    setScreen]    = useState("landing");
   const [state,     setState]     = useState(INITIAL_STATE);
   const [member,    setMember]    = useState(null);
   const [restoring, setRestoring] = useState(true);
+  const [lastLogin, setLastLogin] = useState(null); // { projectCode, memberCode, memberName, lastUsed }
   const { saveState, authenticate } = useProjectPersistence();
   const saveTimer = useRef(null);
 
-  // ── Restore session ────────────────────────────────────────────────────────
+  // ── Restore session + read last login ─────────────────────────────────────
   useEffect(() => {
+    // Last login — persists across sessions via localStorage
+    try {
+      const raw = localStorage.getItem(LAST_LOGIN_KEY);
+      if (raw) setLastLogin(JSON.parse(raw));
+    } catch(e) { /* ignore */ }
+    // Active session — sessionStorage (cleared on tab close)
     try {
       const raw = sessionStorage.getItem(SESSION_KEY);
       if (raw) {
@@ -62,6 +70,17 @@ export default function App() {
     setState({ ...result.state, activeLayer:"L3" });
     setMember(result.member);
     setScreen("app");
+    // Remember for next visit
+    try {
+      const entry = {
+        projectCode,
+        memberCode,
+        memberName: result.member?.name || "",
+        lastUsed:   new Date().toISOString(),
+      };
+      localStorage.setItem(LAST_LOGIN_KEY, JSON.stringify(entry));
+      setLastLogin(entry);
+    } catch(e) { /* ignore */ }
   }, [authenticate]);
 
   // ── Sheet handlers (passed into ProjectSetup) ──────────────────────────────
@@ -71,18 +90,51 @@ export default function App() {
       setState(prev => ({ ...prev, projectTier: tierOverride, activeLayer:"setup" }));
       return;
     }
+    // Special key "__projectMeta__" — writes project name and code into state.project
+    if (sheetId === "__projectMeta__") {
+      const { projectName, projectCode } = tierOverride;
+      setState(prev => ({
+        ...prev,
+        project: {
+          ...prev.project,
+          name: projectName,
+          code: projectCode,
+        },
+      }));
+      // Remember last project code for login pre-fill
+      try {
+        const existing = JSON.parse(localStorage.getItem("norcon_last_login") || "{}");
+        localStorage.setItem("norcon_last_login", JSON.stringify({
+          ...existing,
+          projectCode,
+          lastUsed: new Date().toISOString(),
+        }));
+      } catch(e) { /* ignore */ }
+      return;
+    }
     // Special key "__loginCode__" — adds PM login code into l2.loginCodes
     if (sheetId === "__loginCode__") {
+      const loginEntry = tierOverride;
       setState(prev => ({
         ...prev,
         l2: {
           ...prev.l2,
           loginCodes: [
             ...(prev.l2.loginCodes || []).filter(m => !m.isPM),
-            tierOverride,
+            loginEntry,
           ],
         },
       }));
+      // Remember last login code for pre-fill
+      try {
+        const existing = JSON.parse(localStorage.getItem("norcon_last_login") || "{}");
+        localStorage.setItem("norcon_last_login", JSON.stringify({
+          ...existing,
+          memberCode: loginEntry.loginCode,
+          memberName: loginEntry.name,
+          lastUsed:   new Date().toISOString(),
+        }));
+      } catch(e) { /* ignore */ }
       return;
     }
     setState(prev => ({
@@ -212,7 +264,7 @@ export default function App() {
   }
 
   if (screen === "landing") {
-    return <LandingScreen onCreateNew={handleCreateNew} onLogin={handleLogin}/>;
+    return <LandingScreen onCreateNew={handleCreateNew} onLogin={handleLogin} lastLogin={lastLogin}/>;
   }
 
   const approvedCount = Object.values(state.l2.sheets).filter(s => s.locked).length;

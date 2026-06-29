@@ -170,29 +170,61 @@ function TierSelect({ onSelect }) {
   );
 }
 
-// ── PM Setup screen — name + login code generation ───────────────────────────
-function PMSetup({ tier, projectCode, onConfirm }) {
-  const [pmName,    setPmName]    = useState("");
-  const [pmCode,    setPmCode]    = useState("");
-  const [codeReady, setCodeReady] = useState(false);
-  const [error,     setError]     = useState("");
+// ── PM Setup screen — project name, code, PM name, login code ────────────────
+function PMSetup({ tier, onConfirm }) {
+  const [projectName, setProjectName] = useState("");
+  const [projectCode, setProjectCode] = useState("");
+  const [pmName,      setPmName]      = useState("");
+  const [pmCode,      setPmCode]      = useState("");
+  const [codeReady,   setCodeReady]   = useState(false);
+  const [errors,      setErrors]      = useState({});
 
   const tierCfg = TIERS[tier];
 
+  const deriveCode = (name) => {
+    // Auto-suggest a project code from first letters of project name words
+    const words = name.trim().split(/\s+/).filter(Boolean);
+    if (words.length === 0) return "";
+    if (words.length === 1) return words[0].slice(0, 4).toUpperCase();
+    return words.map(w => w[0]).join("").slice(0, 5).toUpperCase();
+  };
+
+  const handleProjectNameChange = (val) => {
+    setProjectName(val);
+    setCodeReady(false);
+    setPmCode("");
+    // Auto-fill project code if it hasn't been manually edited
+    if (!projectCode || projectCode === deriveCode(projectName)) {
+      setProjectCode(deriveCode(val));
+    }
+  };
+
+  const validate = () => {
+    const e = {};
+    if (!projectName.trim()) e.projectName = "Required";
+    if (!projectCode.trim()) e.projectCode = "Required";
+    if (!pmName.trim())      e.pmName      = "Required";
+    setErrors(e);
+    return Object.keys(e).length === 0;
+  };
+
   const generateCode = () => {
-    if (!pmName.trim()) { setError("Please enter the Project Manager's name first."); return; }
-    setError("");
-    // Generate a simple login code from project code prefix
-    const prefix = (projectCode || "PM").toUpperCase().slice(0, 4);
+    if (!validate()) return;
+    const prefix = (projectCode || "PM").toUpperCase().slice(0, 5);
     const num    = Math.floor(1000 + Math.random() * 9000);
     setPmCode(`${prefix}-${num}`);
     setCodeReady(true);
   };
 
   const handleConfirm = () => {
-    if (!pmName.trim()) { setError("Name is required."); return; }
-    if (!pmCode)        { setError("Please generate a login code first."); return; }
-    onConfirm({ name: pmName.trim(), loginCode: pmCode });
+    if (!codeReady) { generateCode(); return; }
+    if (!validate()) return;
+    onConfirm({
+      projectName: projectName.trim(),
+      projectCode: projectCode.trim().toUpperCase(),
+      pmName:      pmName.trim(),
+      loginCode:   pmCode,
+    });
   };
 
   const inp = {
@@ -201,19 +233,23 @@ function PMSetup({ tier, projectCode, onConfirm }) {
     width:"100%", boxSizing:"border-box", fontFamily:"inherit",
   };
 
+  const fieldErr = (key) => errors[key]
+    ? <div style={{ fontSize:10, color:C.risk, marginTop:4 }}>{errors[key]}</div>
+    : null;
+
   return (
     <div style={{ flex:1, display:"flex", alignItems:"center", justifyContent:"center",
-      background:C.bg, padding:32 }}>
-      <div style={{ maxWidth:440, width:"100%" }}>
+      background:C.bg, padding:32, overflowY:"auto" }}>
+      <div style={{ maxWidth:480, width:"100%" }}>
 
         {/* Header */}
-        <div style={{ textAlign:"center", marginBottom:28 }}>
-          <div style={{ fontSize:28, marginBottom:10 }}>{tierCfg.icon}</div>
+        <div style={{ textAlign:"center", marginBottom:24 }}>
+          <div style={{ fontSize:28, marginBottom:8 }}>{tierCfg.icon}</div>
           <div style={{ fontSize:18, fontWeight:700, color:C.sage, marginBottom:6 }}>
-            {tierCfg.label} Project
+            {tierCfg.label} Project Setup
           </div>
           <div style={{ fontSize:12, color:C.muted, lineHeight:1.6 }}>
-            Before we begin, we need one thing — the Project Manager's name and a login code.
+            Give your project a name and code, then register the Project Manager.
           </div>
         </div>
 
@@ -221,61 +257,101 @@ function PMSetup({ tier, projectCode, onConfirm }) {
         <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:10,
           padding:"24px 28px" }}>
 
-          {/* PM Name */}
-          <div style={{ marginBottom:18 }}>
+          {/* ── Project Details ── */}
+          <div style={{ fontSize:10, fontWeight:700, color:C.accentL, textTransform:"uppercase",
+            letterSpacing:".6px", marginBottom:12 }}>Project Details</div>
+
+          <div style={{ marginBottom:16 }}>
             <label style={{ display:"block", fontSize:11, fontWeight:700, color:C.dim,
               textTransform:"uppercase", letterSpacing:".5px", marginBottom:7 }}>
-              Project Manager Name
+              Project Name
             </label>
-            <input style={{ ...inp, borderColor: error && !pmName.trim() ? C.risk : C.border }}
-              value={pmName}
-              onChange={e => { setPmName(e.target.value); setCodeReady(false); setPmCode(""); setError(""); }}
-              placeholder="e.g. Sarah Johnson"
-              onKeyDown={e => e.key === "Enter" && generateCode()}
+            <input style={{ ...inp, borderColor: errors.projectName ? C.risk : C.border }}
+              value={projectName}
+              onChange={e => handleProjectNameChange(e.target.value)}
+              placeholder="e.g. Northumbria Waterfront Regeneration"
               autoFocus/>
+            {fieldErr("projectName")}
           </div>
 
-          {/* Login code generation */}
+          <div style={{ marginBottom:20 }}>
+            <label style={{ display:"block", fontSize:11, fontWeight:700, color:C.dim,
+              textTransform:"uppercase", letterSpacing:".5px", marginBottom:7 }}>
+              Project Code
+              <span style={{ fontSize:9, color:C.muted, fontWeight:400, marginLeft:6, textTransform:"none" }}>
+                (used as login code prefix)
+              </span>
+            </label>
+            <input style={{ ...inp, borderColor: errors.projectCode ? C.risk : C.border,
+              textTransform:"uppercase", fontFamily:"monospace", letterSpacing:".08em" }}
+              value={projectCode}
+              onChange={e => { setProjectCode(e.target.value.toUpperCase().slice(0,6)); setCodeReady(false); setPmCode(""); }}
+              placeholder="e.g. NWR"/>
+            {fieldErr("projectCode")}
+            {!errors.projectCode && projectCode && (
+              <div style={{ fontSize:10, color:C.muted, marginTop:4 }}>
+                Login codes will be formatted: <span style={{ color:C.accentL, fontFamily:"monospace" }}>{projectCode}-XXXX</span>
+              </div>
+            )}
+          </div>
+
+          {/* Divider */}
+          <div style={{ borderTop:`1px solid ${C.border}`, margin:"4px 0 18px" }}/>
+
+          {/* ── Project Manager ── */}
+          <div style={{ fontSize:10, fontWeight:700, color:C.accentL, textTransform:"uppercase",
+            letterSpacing:".6px", marginBottom:12 }}>Project Manager</div>
+
+          <div style={{ marginBottom:16 }}>
+            <label style={{ display:"block", fontSize:11, fontWeight:700, color:C.dim,
+              textTransform:"uppercase", letterSpacing:".5px", marginBottom:7 }}>
+              Full Name
+            </label>
+            <input style={{ ...inp, borderColor: errors.pmName ? C.risk : C.border }}
+              value={pmName}
+              onChange={e => { setPmName(e.target.value); setCodeReady(false); setPmCode(""); setErrors(p => ({...p, pmName:""})); }}
+              placeholder="e.g. Sarah Johnson"
+              onKeyDown={e => e.key === "Enter" && generateCode()}/>
+            {fieldErr("pmName")}
+          </div>
+
           <div style={{ marginBottom:20 }}>
             <label style={{ display:"block", fontSize:11, fontWeight:700, color:C.dim,
               textTransform:"uppercase", letterSpacing:".5px", marginBottom:7 }}>
               Login Code
             </label>
             {codeReady ? (
-              <div style={{ display:"flex", gap:10, alignItems:"center" }}>
-                <div style={{ flex:1, background:C.surface2, border:`1px solid ${C.accentL}44`,
-                  borderRadius:6, padding:"10px 13px", fontFamily:"monospace", fontSize:16,
-                  fontWeight:700, color:C.accentL, letterSpacing:".12em" }}>
-                  {pmCode}
+              <div>
+                <div style={{ display:"flex", gap:10, alignItems:"center" }}>
+                  <div style={{ flex:1, background:C.surface2, border:`1px solid ${C.accentL}66`,
+                    borderRadius:6, padding:"10px 13px", fontFamily:"monospace", fontSize:16,
+                    fontWeight:700, color:C.accentL, letterSpacing:".12em" }}>
+                    {pmCode}
+                  </div>
+                  <button onClick={() => { setCodeReady(false); setPmCode(""); }}
+                    style={{ padding:"10px 14px", background:"none", border:`1px solid ${C.border}`,
+                      borderRadius:6, color:C.muted, fontSize:11, cursor:"pointer", whiteSpace:"nowrap" }}>
+                    Regenerate
+                  </button>
                 </div>
-                <button onClick={() => { setCodeReady(false); setPmCode(""); }}
-                  style={{ padding:"10px 14px", background:"none", border:`1px solid ${C.border}`,
-                    borderRadius:6, color:C.muted, fontSize:11, cursor:"pointer", whiteSpace:"nowrap" }}>
-                  Regenerate
-                </button>
+                <div style={{ fontSize:10, color:C.muted, marginTop:6 }}>
+                  Share this code with the Project Manager to log in later.
+                </div>
               </div>
             ) : (
-              <button onClick={generateCode} disabled={!pmName.trim()}
-                style={{ width:"100%", padding:"10px", background: pmName.trim() ? C.surface2 : "#0D2B1B",
-                  border:`1px solid ${pmName.trim() ? C.accentL+"66" : C.border}`,
-                  borderRadius:6, color: pmName.trim() ? C.accentL : C.muted,
-                  fontSize:12, fontWeight:700, cursor: pmName.trim() ? "pointer" : "not-allowed" }}>
+              <button onClick={generateCode}
+                style={{ width:"100%", padding:"10px", background:C.surface2,
+                  border:`1px solid ${C.accentL}55`,
+                  borderRadius:6, color:C.accentL,
+                  fontSize:12, fontWeight:700, cursor:"pointer" }}>
                 Generate Login Code
               </button>
             )}
-            {codeReady && (
-              <div style={{ fontSize:10, color:C.muted, marginTop:6 }}>
-                Share this code with the Project Manager — they'll use it to log in.
-              </div>
-            )}
           </div>
 
-          {error && (
-            <div style={{ fontSize:11, color:C.risk, marginBottom:14 }}>{error}</div>
-          )}
-
           <button onClick={handleConfirm} disabled={!codeReady}
-            style={{ width:"100%", padding:"12px", background: codeReady ? C.accent : "#1F4D34",
+            style={{ width:"100%", padding:"12px",
+              background: codeReady ? C.accent : "#1F4D34",
               border:"none", borderRadius:7, color:"#fff", fontSize:13, fontWeight:700,
               cursor: codeReady ? "pointer" : "not-allowed",
               boxShadow: codeReady ? `0 4px 16px ${C.accent}44` : "none",
@@ -287,10 +363,8 @@ function PMSetup({ tier, projectCode, onConfirm }) {
         {/* Tier note */}
         <div style={{ textAlign:"center", marginTop:14, fontSize:11, color:C.muted }}>
           <span style={{ color:C.dim }}>{tierCfg.label} tier</span>
-          {" · "}
-          {tierCfg.sheets.length} sheets active
-          {" · "}
-          <span style={{ color:C.accentL }}>PM · Full Access</span>
+          {" · "}{tierCfg.sheets.length} sheets active
+          {" · "}<span style={{ color:C.accentL }}>PM · Full Access</span>
         </div>
       </div>
     </div>
@@ -895,14 +969,15 @@ Choose from roles typical for this type of project. Max 6 suggestions. Do not in
     return (
       <PMSetup
         tier={tier}
-        projectCode={project?.code || "PM"}
-        onConfirm={({ name, loginCode }) => {
+        onConfirm={({ projectName, projectCode, pmName, loginCode }) => {
+          // Write project meta
+          onSheetUpdate("__projectMeta__", {}, "empty", { projectName, projectCode });
           // Write PM into Sheet 02 team members
           onSheetUpdate("02", {
             teamMembers: [{
               _id: "TM-001",
               loginCode,
-              name,
+              name: pmName,
               role: "Project Manager",
               deliveryRole: "",
               availability: "",
@@ -911,13 +986,18 @@ Choose from roles typical for this type of project. Max 6 suggestions. Do not in
               isPM: true,
             }]
           }, "in-progress");
-          // Write PM name into Sheet 01 charter
+          // Write PM name + project details into Sheet 01 charter
           const charter = sheets["01"]?.data?.charter || {};
           onSheetUpdate("01", {
-            charter: { ...charter, projectManager: name }
+            charter: {
+              ...charter,
+              projectName,
+              projectCode,
+              projectManager: pmName,
+            }
           }, sheets["01"]?.status || "in-progress");
-          // Write login code into l2.loginCodes via a special key
-          onSheetUpdate("__loginCode__", {}, "empty", { loginCode, name, role:"Project Manager", isPM:true });
+          // Write login code into l2.loginCodes
+          onSheetUpdate("__loginCode__", {}, "empty", { loginCode, name: pmName, role:"Project Manager", isPM:true });
         }}/>
     );
   }
