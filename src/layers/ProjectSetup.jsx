@@ -703,6 +703,52 @@ Return only the fields that have data:
   };
 
   // ── Document extraction ───────────────────────────────────────────────────
+  // ── Excel date serial → ISO date ──────────────────────────────────────────
+  const excelDateToISO = (serial) => {
+    if (!serial || isNaN(serial)) return "";
+    // Excel date serial: days since 1900-01-01 (with Lotus 1-2-3 leap year bug)
+    const date = new Date((serial - 25569) * 86400 * 1000);
+    if (isNaN(date.getTime())) return "";
+    return date.toISOString().slice(0, 10);
+  };
+
+  // ── Read Excel file into structured text using SheetJS ────────────────────
+  const readExcelAsText = async (file) => {
+    const XLSX = await import("xlsx");
+    const buf  = await file.arrayBuffer();
+    const wb   = XLSX.read(buf, { type:"array", cellDates:false });
+    let output = `EXCEL FILE: ${file.name}\n\n`;
+
+    wb.SheetNames.forEach(sheetName => {
+      const ws   = wb.Sheets[sheetName];
+      const rows = XLSX.utils.sheet_to_json(ws, { header:1, defval:"" });
+      if (!rows.length) return;
+
+      // Find header row (first non-empty row with multiple values)
+      let headerIdx = 0;
+      for (let i = 0; i < Math.min(rows.length, 10); i++) {
+        const nonEmpty = rows[i].filter(c => c !== "").length;
+        if (nonEmpty >= 3) { headerIdx = i; break; }
+      }
+
+      output += `--- Sheet: ${sheetName} ---\n`;
+
+      // Output rows as readable text, converting Excel date serials
+      rows.slice(0, 200).forEach((row, ri) => {
+        const cells = row.map(cell => {
+          if (typeof cell === "number" && cell > 40000 && cell < 60000) {
+            return excelDateToISO(cell);
+          }
+          return String(cell).trim();
+        }).filter(c => c !== "");
+        if (cells.length > 0) output += cells.join("\t") + "\n";
+      });
+      output += "\n";
+    });
+
+    return output;
+  };
+
   const handleFileUpload = async (e) => {
     const files = Array.from(e.target.files || []);
     if (!files.length) return;
@@ -713,25 +759,45 @@ Return only the fields that have data:
       setAiStatus(`Reading ${file.name}…`);
       try {
         let text = "";
-        if (file.name.endsWith(".docx")) {
+        const name = file.name.toLowerCase();
+
+        if (name.endsWith(".docx")) {
+          // Use mammoth for structured HTML extraction (preserves headings/tables)
           const buf = await file.arrayBuffer();
-          const res = await mammoth.extractRawText({ arrayBuffer: buf });
-          text = res.value;
-        } else if (file.name.endsWith(".xlsx") || file.name.endsWith(".xls")) {
-          // For Excel, read as text and pass to AI for interpretation
-          text = `[Excel file: ${file.name}] — PM uploaded a spreadsheet. Extract schedule/cost/team data if present.`;
+          const [rawRes, htmlRes] = await Promise.all([
+            mammoth.extractRawText({ arrayBuffer: buf }),
+            mammoth.convertToHtml({ arrayBuffer: buf }),
+          ]);
+          // Use raw text but strip excessive whitespace
+          text = rawRes.value.replace(/\n{3,}/g, "\n\n").trim();
+
+        } else if (name.endsWith(".xlsx") || name.endsWith(".xls")) {
+          // Properly parse Excel with SheetJS — convert date serials to real dates
+          text = await readExcelAsText(file);
+
+        } else if (name.endsWith(".csv")) {
+          text = await file.text();
+
         } else {
           text = await file.text();
         }
+
+        if (!text.trim()) {
+          setExtractMsg(`⚠ ${file.name} appears to be empty or unreadable.`);
+          continue;
+        }
+
         setFileList(prev => [...prev, file.name]);
-        await runExtraction(text, file.name);
+        await runExtraction(text, file.name, name.endsWith(".xlsx") || name.endsWith(".xls") ? "excel" : "document");
+
       } catch(err) {
         setExtractMsg(`⚠ Error reading ${file.name}: ${err.message}`);
       }
     }
+
     setExtracting(false);
     setAiStatus("");
-    setExtractMsg("✓ Extraction complete. Recommendations applied to sheets.");
+    setExtractMsg("✓ Extraction complete — review sheets for populated data.");
     e.target.value = "";
   };
 
@@ -749,38 +815,70 @@ Return only the fields that have data:
     setExtracting(false);
   };
 
-  const runExtraction = async (text, source) => {
-    setAiStatus(`Extracting project data from ${source}…`);
-    // Chunk large documents to avoid token limits
-    const MAX_CHARS = 12000;
+  const runExtraction = async (text, source, fileType = "document") => {
+    setAiStatus(`Analysing ${source} for project data…`);
+
+    // For large documents, use up to 24000 chars — enough for a full schedule
+    const MAX_CHARS = 24000;
     const chunk = text.slice(0, MAX_CHARS);
     const truncated = text.length > MAX_CHARS;
-
     const tierSheets = tierCfg?.sheets || ["01","02","03","05"];
-    const prompt = `You are an expert project manager extracting structured project data from a document.
-Source: ${source}
-Tier: ${tier} (${tierCfg?.label})
-Active sheets: ${tierSheets.join(", ")}
-${truncated ? "(Note: document was truncated for processing)" : ""}
 
-Document:
+    const excelInstructions = fileType === "excel" ? `
+EXCEL-SPECIFIC INSTRUCTIONS:
+- Dates are already converted to ISO format (YYYY-MM-DD) — use them directly
+- Rows with IDs like A01, B02, C03 etc are activities — extract ALL of them
+- "Task/Activity" column = activity name
+- "Start Date" column = startDate, "End Date" column = targetDate
+- "Finacial Resource" or cost columns = budget/cost data
+- "Progress" column values: 1 = Complete, 0 = Not started, 0.5 = In Progress
+- Phase/section headers (single letter like A, B, C) = phase names, use them for the activities below them
+- Extract EVERY individual activity row, not just phase headers
+` : `
+DOCUMENT-SPECIFIC INSTRUCTIONS:
+- Extract ALL named activities, tasks, deliverables, milestones mentioned
+- Extract ALL named people and their roles
+- Extract ALL dates mentioned (convert to YYYY-MM-DD format)
+- Extract ALL risks, issues, constraints mentioned
+- Extract project name, purpose, objectives from headings and opening sections
+- Extract budget/cost figures mentioned anywhere in the document
+`;
+
+    const prompt = `You are an expert project manager performing intelligent extraction from a real project document. Extract EVERYTHING useful — be thorough and specific, not generic.
+
+Source file: ${source}
+File type: ${fileType}
+Project tier: ${tier} (${tierCfg?.label})
+Active sheets: ${tierSheets.join(", ")}
+${truncated ? `NOTE: Document was truncated at ${MAX_CHARS} characters. Extract as much as possible from what you can see.` : ""}
+
+${excelInstructions}
+
+DOCUMENT CONTENT:
 ${chunk}
 
-Extract ALL project information and return ONLY valid JSON, no markdown fences, no preamble, no trailing text after the closing brace.
-Return this exact structure (omit arrays that have no data, do not leave trailing commas):
+CRITICAL RULES:
+1. Extract REAL data from the document — never invent generic placeholders
+2. Use actual names, dates, costs and task names from the document
+3. If a field cannot be found in the document, omit it (do not fill with generic text)
+4. For activities from Excel schedules: extract EVERY row as a separate activity
+5. Map phases correctly — use the phase/section labels from the document
+6. Convert all cost values to GBP numbers only (no currency symbols in JSON)
+7. For completion status: if progress = 1 or 100%, mark _complete as true
+
+Return ONLY valid JSON, no markdown fences, no preamble, no trailing text:
 {
   "charter":{"projectName":"","purpose":"","problemStatement":"","startDate":"","endDate":"","budget":"","projectManager":"","projectSponsor":"","organisation":"","strategicAlignment":"","withinScope":[],"outOfScope":[]},
   "team":[{"name":"","role":"","deliveryRole":"","availability":""}],
-  "activities":[{"name":"","phase":"","targetDate":"","responsible":""}],
-  "milestones":[{"name":"","phase":"","targetDate":""}],
-  "risks":[{"name":"","cause":"","potentialImpact":"","likelihood":"","impact":"","response":"","mitigation":"","category":""}],
-  "issues":[{"name":"","description":"","priority":"","owner":""}],
+  "activities":[{"name":"","phase":"","startDate":"","targetDate":"","responsible":"","_complete":false,"plannedCost":""}],
+  "milestones":[{"name":"","phase":"","targetDate":"","_complete":false}],
+  "risks":[{"name":"","cause":"","potentialImpact":"","likelihood":"2","impact":"2","response":"Reduce","mitigation":"","category":""}],
   "deliverables":[{"name":"","phase":"","targetDate":"","priority":""}],
-  "stakeholders":[{"name":"","category":"","power":"","interest":"","influence":"","engagementStrategy":""}],
+  "stakeholders":[{"name":"","category":"","power":"5","interest":"5","influence":"5","engagementStrategy":""}],
   "benefits":[{"name":"","category":"","owner":"","targetDate":""}]
 }`;
 
-    const raw = await callExtract([{ role:"user", content:prompt }], 3000);
+    const raw = await callExtract([{ role:"user", content:prompt }], 4000);
     let extracted = {};
     try {
       extracted = safeParseJSON(raw);
@@ -790,14 +888,14 @@ Return this exact structure (omit arrays that have no data, do not leave trailin
 
     // Map into sheets — PM edits always win (only fill empty fields)
     const c = sheets["01"]?.data?.charter || {};
-    if (extracted.charter) {
+    if (extracted.charter && Object.keys(extracted.charter).some(k => extracted.charter[k])) {
       const merged = { ...extracted.charter };
       Object.keys(merged).forEach(k => { if (c[k]) merged[k] = c[k]; });
       onSheetUpdate("01", { charter: { ...c, ...merged } }, "ai-draft");
     }
 
     const existingTeam = sheets["02"]?.data?.teamMembers || [];
-    if (extracted.team?.length > 0 && existingTeam.length === 0) {
+    if (extracted.team?.length > 0 && existingTeam.filter(m => m.name).length === 0) {
       onSheetUpdate("02", { teamMembers: extracted.team.map((m,i) => ({
         _id:`TM-${String(i+1).padStart(3,"0")}`, name:m.name||"", role:m.role||"",
         deliveryRole:m.deliveryRole||"", availability:m.availability||"",
@@ -805,23 +903,35 @@ Return this exact structure (omit arrays that have no data, do not leave trailin
       }))}, "ai-draft");
     }
 
-    const existingActs = sheets["03"]?.data?.activities || [];
+    const existingActs  = sheets["03"]?.data?.activities || [];
     const existingMiles = sheets["03"]?.data?.milestones || [];
-    const newActs  = (extracted.activities||[]).map((a,i) => ({ _id:`ACT-${String(i+1).padStart(3,"0")}`, name:a.name||"", phase:a.phase||"Definition", targetDate:a.targetDate||"", responsible:a.responsible||"", _complete:false }));
-    const newMiles = (extracted.milestones||[]).map((m,i) => ({ _id:`MS-${String(i+1).padStart(3,"0")}`,  name:m.name||"", phase:m.phase||"Definition", targetDate:m.targetDate||"", _complete:false }));
-    if ((newActs.length > 0 && existingActs.length === 0) || (newMiles.length > 0 && existingMiles.length === 0)) {
+    const newActs  = (extracted.activities||[]).map((a,i) => ({
+      _id:`ACT-${String(i+1).padStart(3,"0")}`,
+      name:a.name||"", phase:a.phase||"", startDate:a.startDate||"",
+      targetDate:a.targetDate||"", responsible:a.responsible||"",
+      _complete:a._complete||false, plannedCost:a.plannedCost||"",
+    }));
+    const newMiles = (extracted.milestones||[]).map((m,i) => ({
+      _id:`MS-${String(i+1).padStart(3,"0")}`,
+      name:m.name||"", phase:m.phase||"",
+      targetDate:m.targetDate||"", _complete:m._complete||false,
+    }));
+    if (newActs.length > 0 && existingActs.length === 0) {
       onSheetUpdate("03", {
-        activities: existingActs.length > 0 ? existingActs : newActs,
-        milestones:  existingMiles.length > 0 ? existingMiles : newMiles,
+        activities: newActs,
+        milestones: existingMiles.length > 0 ? existingMiles : (newMiles.length > 0 ? newMiles : []),
       }, "ai-draft");
+    } else if (newMiles.length > 0 && existingMiles.length === 0) {
+      onSheetUpdate("03", { milestones: newMiles }, "ai-draft");
     }
 
     const existingRisks = sheets["05"]?.data?.risks || [];
     if (extracted.risks?.length > 0 && existingRisks.length === 0) {
       onSheetUpdate("05", { risks: extracted.risks.map((r,i) => ({
         _id:`R-${String(101+i)}`, name:r.name||"", cause:r.cause||"",
-        potentialImpact:r.potentialImpact||"", likelihood:r.likelihood||"2",
-        impact:r.impact||"2", response:r.response||"Reduce", mitigation:r.mitigation||"", category:r.category||"",
+        potentialImpact:r.potentialImpact||"",
+        likelihood:r.likelihood||"2", impact:r.impact||"2",
+        response:r.response||"Reduce", mitigation:r.mitigation||"", category:r.category||"",
       }))}, "ai-draft");
     }
 
@@ -830,8 +940,8 @@ Return this exact structure (omit arrays that have no data, do not leave trailin
       if (extracted.stakeholders?.length > 0 && existingSH.length === 0) {
         onSheetUpdate("08", { stakeholders: extracted.stakeholders.map((s,i) => ({
           _id:`SH-${String(i+1).padStart(3,"0")}`, name:s.name||"", category:s.category||"",
-          power:parseInt(s.power)||5, interest:parseInt(s.interest)||5, influence:parseInt(s.influence)||5,
-          ease:5, engagementStrategy:s.engagementStrategy||"",
+          power:parseInt(s.power)||5, interest:parseInt(s.interest)||5,
+          influence:parseInt(s.influence)||5, ease:5, engagementStrategy:s.engagementStrategy||"",
         }))}, "ai-draft");
       }
       const existingDels = sheets["07"]?.data?.deliverables || [];
@@ -843,16 +953,20 @@ Return this exact structure (omit arrays that have no data, do not leave trailin
       }
     }
 
-    // Feed summary into Q&A context for smarter next questions
+    // Feed extraction summary into Q&A
+    const summary = [
+      extracted.charter?.projectName && `Project: "${extracted.charter.projectName}"`,
+      extracted.charter?.projectManager && `PM: ${extracted.charter.projectManager}`,
+      extracted.activities?.length && `${extracted.activities.length} activities`,
+      extracted.milestones?.length && `${extracted.milestones.length} milestones`,
+      extracted.risks?.length && `${extracted.risks.length} risks`,
+      extracted.team?.length && `${extracted.team.length} team members`,
+      extracted.stakeholders?.length && `${extracted.stakeholders.length} stakeholders`,
+    ].filter(Boolean).join(", ");
+
     setQaMessages(prev => [...prev, {
       role:"system",
-      text:`✓ Extracted from ${source}: ${[
-        extracted.charter?.projectName && `Project "${extracted.charter.projectName}"`,
-        extracted.team?.length && `${extracted.team.length} team members`,
-        extracted.activities?.length && `${extracted.activities.length} activities`,
-        extracted.risks?.length && `${extracted.risks.length} risks`,
-        extracted.stakeholders?.length && `${extracted.stakeholders.length} stakeholders`,
-      ].filter(Boolean).join(", ")}`,
+      text:`✓ Extracted from ${source}: ${summary || "no structured data found — check document format"}`,
     }]);
   };
 
@@ -1025,13 +1139,15 @@ Choose from roles typical for this type of project. Max 6 suggestions. Do not in
       onSheetUpdate("02", { teamMembers: newMembers }, "ai-draft");
     }
 
-    // Write all generated login codes into l2.loginCodes so L3 can read them
-    newMembers.forEach(m => {
+    // Write all generated login codes into l2.loginCodes so Sheet02Team renders them
+    // The PM entry from PMSetup screen is already in loginCodes — only add non-PM roles
+    const nonPMMembers = newMembers.filter(m => !m.isPM);
+    nonPMMembers.forEach(m => {
       onSheetUpdate("__loginCode__", {}, "empty", {
         loginCode: m.loginCode,
         name:      m.name,
         role:      m.role,
-        isPM:      m.isPM,
+        isPM:      false,
       });
     });
 
