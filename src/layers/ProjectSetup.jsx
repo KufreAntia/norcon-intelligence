@@ -478,30 +478,100 @@ export default function ProjectSetup({ state, onSheetUpdate, onSheetApprove, onS
     qaBottomRef.current?.scrollIntoView({ behavior:"smooth" });
   }, [qaMessages]);
 
-  // ── Start Q&A — ask first question with AI recommendation ─────────────────
-  useEffect(() => {
-    if (!tier || qaMessages.length > 0) return;
-    askQuestion(0);
-  }, [tier]);
+  // ── Q&A only starts after role selection (blur is lifted) — not on mount ──
+  // This prevents generic questions firing before the PM has done anything
+  // askQuestion is called explicitly from confirmRoles instead
+
+  // ── Check if a question's fields are already populated from extraction ─────
+  const areFieldsPopulated = (fields) => {
+    const c = sheets["01"]?.data?.charter || {};
+    const fieldMap = {
+      projectName:   c.projectName,
+      purpose:       c.purpose,
+      endDate:       c.endDate,
+      startDate:     c.startDate,
+      budget:        c.budget,
+      projectManager: c.projectManager,
+      projectSponsor: c.projectSponsor,
+      organisation:  c.organisation,
+      successCriteria: c.successCriteria,
+      team:          (sheets["02"]?.data?.teamMembers||[]).filter(m=>m.name).length > 0,
+      risks:         (sheets["05"]?.data?.risks||[]).length > 0,
+      deliverables:  (sheets["03"]?.data?.activities||[]).length > 0,
+      schedule:      (sheets["03"]?.data?.activities||[]).length > 0,
+      stakeholders:  (sheets["08"]?.data?.stakeholders||[]).length > 0,
+      benefits:      (sheets["07"]?.data?.deliverables||[]).length > 0,
+    };
+    // A question is "populated" if ALL its primary fields already have data
+    return fields.every(f => !!fieldMap[f]);
+  };
 
   const askQuestion = async (idx) => {
     if (!tierCfg || idx >= questions.length) return;
     const q = questions[idx];
+
+    // Skip this question if its fields are already populated from document extraction
+    if (areFieldsPopulated(q.fields)) {
+      // Auto-advance to next unanswered question
+      const nextUnanswered = questions.findIndex((qq, i) => i > idx && !areFieldsPopulated(qq.fields));
+      if (nextUnanswered !== -1) {
+        askQuestion(nextUnanswered);
+      } else {
+        // All questions answered by extraction — notify and stop
+        setQaMessages(prev => [...prev, {
+          role: "system",
+          text: "✓ All key project fields have been populated from your uploaded documents. Review the sheets and make any adjustments needed.",
+        }]);
+      }
+      return;
+    }
+
     setQaLoading(true);
-    setAiStatus(`Preparing question ${idx + 1} of ${questions.length}…`);
+    setAiStatus(`Preparing question for missing field: ${q.fields.join(", ")}…`);
     try {
       const context = buildSheetContext();
-      const prompt = `You are a project management assistant helping set up a ${tierCfg.label} project.
-Current project data: ${JSON.stringify(context)}
-Question to ask: "${q.text}"
-Fields this answer will populate: ${q.fields.join(", ")}
+      const hasExtractedData = context.projectName || context.purpose || context.projectManager;
 
-Respond in JSON only, no markdown fences, no preamble:
-{"recommendation":"your specific recommended answer here based on any context available, or a helpful example if no context","rationale":"one sentence explaining why"}`;
+      const prompt = `You are a project management assistant helping set up a ${tierCfg.label} project.
+
+CRITICAL: The PM has already uploaded project documents. Use the actual extracted project data below to give a SPECIFIC recommendation — never give a generic example.
+
+Extracted project data:
+- Project name: ${context.projectName || "not yet known"}
+- Purpose: ${context.purpose || "not yet extracted"}
+- PM: ${context.projectManager || "not yet extracted"}
+- Sponsor: ${context.projectSponsor || "not yet extracted"}
+- Start date: ${context.startDate || "not yet extracted"}
+- End date: ${context.endDate || "not yet extracted"}
+- Budget: ${context.budget || "not yet extracted"}
+- Activities found: ${context.activitiesCount}
+- Risks found: ${context.risksCount}
+- Team members found: ${context.teamCount}
+
+Question to ask: "${q.text}"
+Fields this will populate: ${q.fields.join(", ")}
+
+${hasExtractedData
+  ? "Based on the ACTUAL project data above, provide a specific recommendation for the missing field(s). Reference the real project name and context."
+  : "No document data yet — provide a helpful guiding question with a concise example."
+}
+
+Respond in JSON only, no markdown fences:
+{"recommendation":"specific recommendation grounded in actual project data","rationale":"one sentence why this matters for ${q.fields.join(", ")}","isAlreadyKnown":false}`;
 
       const raw = await callExtract([{ role:"user", content:prompt }], 500);
-      let rec = { recommendation:"", rationale:"" };
+      let rec = { recommendation:"", rationale:"", isAlreadyKnown:false };
       try { rec = safeParseJSON(raw); } catch(e) { rec = { recommendation: raw.slice(0,200), rationale:"" }; }
+
+      // If AI says the field is already known, skip
+      if (rec.isAlreadyKnown) {
+        setQaLoading(false);
+        setAiStatus("");
+        setCurrentQIdx(idx);
+        const next = questions.findIndex((qq, i) => i > idx && !areFieldsPopulated(qq.fields));
+        if (next !== -1) askQuestion(next);
+        return;
+      }
 
       setQaMessages(prev => [...prev, {
         role: "ai",
@@ -706,46 +776,130 @@ Return only the fields that have data:
   // ── Excel date serial → ISO date ──────────────────────────────────────────
   const excelDateToISO = (serial) => {
     if (!serial || isNaN(serial)) return "";
-    // Excel date serial: days since 1900-01-01 (with Lotus 1-2-3 leap year bug)
     const date = new Date((serial - 25569) * 86400 * 1000);
     if (isNaN(date.getTime())) return "";
     return date.toISOString().slice(0, 10);
   };
 
-  // ── Read Excel file into structured text using SheetJS ────────────────────
+  // ── Parse Excel schedule directly into structured activities ─────────────
+  // Instead of sending raw tab-separated text to AI, we parse it here so
+  // the AI receives clean structured JSON and doesn't misinterpret phase headers
+  const parseExcelSchedule = async (file) => {
+    const XLSX = await import("xlsx");
+    const buf  = await file.arrayBuffer();
+    const wb   = XLSX.read(buf, { type:"array", cellDates:false });
+
+    let bestSheet = null;
+    let bestScore = 0;
+
+    // Find the sheet with the most activity rows (has ID + Task + dates)
+    wb.SheetNames.forEach(name => {
+      const ws   = wb.Sheets[name];
+      const rows = XLSX.utils.sheet_to_json(ws, { header:1, defval:"" });
+      const score = rows.filter(r => {
+        const id   = String(r[0]||"").trim();
+        const task = String(r[1]||"").trim();
+        // Row looks like an activity if ID has a number (A01, B02, etc.) and task name is non-empty
+        return /^[A-Z]\d+/.test(id) && task.length > 2;
+      }).length;
+      if (score > bestScore) { bestScore = score; bestSheet = name; }
+    });
+
+    if (!bestSheet) return null; // Not a schedule format — fall through to AI
+
+    const ws   = wb.Sheets[bestSheet];
+    const rows = XLSX.utils.sheet_to_json(ws, { header:1, defval:"" });
+
+    // Find header row
+    let idCol=0, taskCol=1, startCol=2, endCol=3, costCol=4, progressCol=7;
+    for (let ri = 0; ri < Math.min(rows.length, 15); ri++) {
+      const r = rows[ri].map(c => String(c||"").toLowerCase().trim());
+      if (r.some(c => c.includes("task") || c.includes("activity"))) {
+        r.forEach((c,ci) => {
+          if (c.includes("id"))                           idCol       = ci;
+          if (c.includes("task") || c.includes("activity")) taskCol   = ci;
+          if (c.includes("start"))                        startCol    = ci;
+          if (c.includes("end") || c.includes("finish"))  endCol      = ci;
+          if (c.includes("cost") || c.includes("amount") || c.includes("financial")) costCol = ci;
+          if (c.includes("progress") || c.includes("complete")) progressCol = ci;
+        });
+        break;
+      }
+    }
+
+    // Track current phase from single-letter rows
+    let currentPhase = "";
+    const phaseMap = { A:"Concept", B:"Definition", C:"Development", D:"Execution", E:"Handover & Closeout" };
+    const activities = [];
+    const milestones = [];
+
+    rows.forEach(row => {
+      const id       = String(row[idCol]||"").trim();
+      const taskName = String(row[taskCol]||"").trim();
+      const rawStart = row[startCol];
+      const rawEnd   = row[endCol];
+      const cost     = row[costCol];
+      const progress = row[progressCol];
+
+      if (!id || !taskName || taskName.length < 2) return;
+
+      // Single letter = phase header
+      if (/^[A-Z]$/.test(id)) {
+        currentPhase = phaseMap[id] || taskName;
+        return;
+      }
+
+      // Skip rows that look like cost ledger items (have account codes)
+      if (/^[A-Z]{3}-\d+/.test(String(row[row.length-1]||""))) return;
+
+      const startDate = typeof rawStart === "number" ? excelDateToISO(rawStart) : String(rawStart||"").trim();
+      const endDate   = typeof rawEnd   === "number" ? excelDateToISO(rawEnd)   : String(rawEnd||"").trim();
+      const isComplete = parseFloat(String(progress||"0")) >= 0.95;
+      const plannedCost = typeof cost === "number" && cost > 0 ? String(cost) : "";
+
+      // Treat as milestone if duration is 0 or task name contains milestone keywords
+      const isMilestone = startDate === endDate ||
+        /milestone|gate|review|sign.?off|approval|launch/i.test(taskName);
+
+      if (isMilestone) {
+        milestones.push({
+          _id: `MS-${String(milestones.length+1).padStart(3,"0")}`,
+          name: taskName, phase: currentPhase,
+          targetDate: endDate || startDate, _complete: isComplete,
+        });
+      } else {
+        activities.push({
+          _id: `ACT-${String(activities.length+1).padStart(3,"0")}`,
+          name: taskName, phase: currentPhase,
+          startDate, targetDate: endDate,
+          responsible: "", _complete: isComplete,
+          plannedCost,
+        });
+      }
+    });
+
+    return { activities, milestones, sheetName: bestSheet };
+  };
+
+  // ── Read Excel file as text fallback for non-schedule files ──────────────
   const readExcelAsText = async (file) => {
     const XLSX = await import("xlsx");
     const buf  = await file.arrayBuffer();
     const wb   = XLSX.read(buf, { type:"array", cellDates:false });
     let output = `EXCEL FILE: ${file.name}\n\n`;
-
-    wb.SheetNames.forEach(sheetName => {
+    wb.SheetNames.slice(0, 3).forEach(sheetName => {
       const ws   = wb.Sheets[sheetName];
       const rows = XLSX.utils.sheet_to_json(ws, { header:1, defval:"" });
-      if (!rows.length) return;
-
-      // Find header row (first non-empty row with multiple values)
-      let headerIdx = 0;
-      for (let i = 0; i < Math.min(rows.length, 10); i++) {
-        const nonEmpty = rows[i].filter(c => c !== "").length;
-        if (nonEmpty >= 3) { headerIdx = i; break; }
-      }
-
       output += `--- Sheet: ${sheetName} ---\n`;
-
-      // Output rows as readable text, converting Excel date serials
-      rows.slice(0, 200).forEach((row, ri) => {
+      rows.slice(0, 100).forEach(row => {
         const cells = row.map(cell => {
-          if (typeof cell === "number" && cell > 40000 && cell < 60000) {
-            return excelDateToISO(cell);
-          }
+          if (typeof cell === "number" && cell > 40000 && cell < 60000) return excelDateToISO(cell);
           return String(cell).trim();
         }).filter(c => c !== "");
         if (cells.length > 0) output += cells.join("\t") + "\n";
       });
       output += "\n";
     });
-
     return output;
   };
 
@@ -762,21 +916,12 @@ Return only the fields that have data:
         const name = file.name.toLowerCase();
 
         if (name.endsWith(".docx")) {
-          // Use mammoth for structured HTML extraction (preserves headings/tables)
           const buf = await file.arrayBuffer();
-          const [rawRes, htmlRes] = await Promise.all([
-            mammoth.extractRawText({ arrayBuffer: buf }),
-            mammoth.convertToHtml({ arrayBuffer: buf }),
-          ]);
-          // Use raw text but strip excessive whitespace
+          const rawRes = await mammoth.extractRawText({ arrayBuffer: buf });
           text = rawRes.value.replace(/\n{3,}/g, "\n\n").trim();
 
         } else if (name.endsWith(".xlsx") || name.endsWith(".xls")) {
-          // Properly parse Excel with SheetJS — convert date serials to real dates
           text = await readExcelAsText(file);
-
-        } else if (name.endsWith(".csv")) {
-          text = await file.text();
 
         } else {
           text = await file.text();
@@ -788,7 +933,7 @@ Return only the fields that have data:
         }
 
         setFileList(prev => [...prev, file.name]);
-        await runExtraction(text, file.name, name.endsWith(".xlsx") || name.endsWith(".xls") ? "excel" : "document");
+        await runExtraction(text, file.name);
 
       } catch(err) {
         setExtractMsg(`⚠ Error reading ${file.name}: ${err.message}`);
@@ -815,148 +960,254 @@ Return only the fields that have data:
     setExtracting(false);
   };
 
-  const runExtraction = async (text, source, fileType = "document") => {
-    setAiStatus(`Analysing ${source} for project data…`);
+  const runExtraction = async (text, source) => {
+    setAiStatus(`Reading ${source}…`);
 
-    // For large documents, use up to 24000 chars — enough for a full schedule
     const MAX_CHARS = 24000;
-    const chunk = text.slice(0, MAX_CHARS);
+    const chunk     = text.slice(0, MAX_CHARS);
     const truncated = text.length > MAX_CHARS;
-    const tierSheets = tierCfg?.sheets || ["01","02","03","05"];
 
-    const excelInstructions = fileType === "excel" ? `
-EXCEL-SPECIFIC INSTRUCTIONS:
-- Dates are already converted to ISO format (YYYY-MM-DD) — use them directly
-- Rows with IDs like A01, B02, C03 etc are activities — extract ALL of them
-- "Task/Activity" column = activity name
-- "Start Date" column = startDate, "End Date" column = targetDate
-- "Finacial Resource" or cost columns = budget/cost data
-- "Progress" column values: 1 = Complete, 0 = Not started, 0.5 = In Progress
-- Phase/section headers (single letter like A, B, C) = phase names, use them for the activities below them
-- Extract EVERY individual activity row, not just phase headers
-` : `
-DOCUMENT-SPECIFIC INSTRUCTIONS:
-- Extract ALL named activities, tasks, deliverables, milestones mentioned
-- Extract ALL named people and their roles
-- Extract ALL dates mentioned (convert to YYYY-MM-DD format)
-- Extract ALL risks, issues, constraints mentioned
-- Extract project name, purpose, objectives from headings and opening sections
-- Extract budget/cost figures mentioned anywhere in the document
-`;
+    // ── STEP 1: Document intelligence — understand structure before extracting ──
+    setAiStatus(`Understanding document structure of ${source}…`);
+    let docIntelligence = "";
+    try {
+      const intelligencePrompt = `You are a project management expert. Analyse this document and describe its structure in 3-5 sentences.
 
-    const prompt = `You are an expert project manager performing intelligent extraction from a real project document. Extract EVERYTHING useful — be thorough and specific, not generic.
+Document: ${source}
+Content (first 3000 chars):
+${text.slice(0, 3000)}
 
-Source file: ${source}
-File type: ${fileType}
-Project tier: ${tier} (${tierCfg?.label})
-Active sheets: ${tierSheets.join(", ")}
-${truncated ? `NOTE: Document was truncated at ${MAX_CHARS} characters. Extract as much as possible from what you can see.` : ""}
+Describe:
+1. What TYPE of document is this? (e.g. project schedule, project brief, risk register, stakeholder map, meeting minutes, charter template, resource plan, etc.)
+2. What PROJECT INFORMATION does it contain? (e.g. task names with dates, team members, risks, objectives, budget)
+3. How is it STRUCTURED? (e.g. "rows have ID, task name, start date, end date columns", "sections with headings for each knowledge area", "table with risk descriptions and scores")
+4. Any SPECIAL PATTERNS to note? (e.g. "phase headers are single letters A/B/C before numbered sub-tasks", "tasks numbered 1.1/1.2", "dates are in DD/MM/YYYY format", "costs in column 5")
 
-${excelInstructions}
+Be specific and concise. This analysis will guide data extraction.`;
 
-DOCUMENT CONTENT:
+      docIntelligence = await callExtract([{ role:"user", content:intelligencePrompt }], 600);
+    } catch(e) {
+      docIntelligence = "Document structure analysis unavailable — proceeding with general extraction.";
+    }
+
+    setQaMessages(prev => [...prev, {
+      role:"system",
+      text:`📄 Analysing ${source}: ${docIntelligence.slice(0, 200)}${docIntelligence.length > 200 ? "…" : ""}`,
+    }]);
+
+    // ── STEP 2: Build current project state snapshot for enrichment + conflict detection ──
+    const currentState = {
+      charter:      sheets["01"]?.data?.charter || {},
+      teamCount:    (sheets["02"]?.data?.teamMembers||[]).filter(m=>m.name).length,
+      actCount:     (sheets["03"]?.data?.activities||[]).length,
+      riskCount:    (sheets["05"]?.data?.risks||[]).length,
+      stakeholders: (sheets["08"]?.data?.stakeholders||[]).length,
+      previousFiles: fileList,
+    };
+    const hasExistingData = currentState.actCount > 0 || currentState.riskCount > 0 ||
+                            Object.values(currentState.charter).some(v => v);
+
+    // ── STEP 3: Extraction informed by document intelligence ──────────────────
+    setAiStatus(`Extracting project data from ${source}…`);
+    const extractionPrompt = `You are an expert project manager extracting structured data from a project document.
+
+DOCUMENT ANALYSIS (from Step 1):
+${docIntelligence}
+
+EXISTING PROJECT DATA (already extracted from previous files):
+${JSON.stringify({
+  projectName: currentState.charter.projectName || "none",
+  projectManager: currentState.charter.projectManager || "none",
+  endDate: currentState.charter.endDate || "none",
+  activitiesAlreadyExtracted: currentState.actCount,
+  risksAlreadyExtracted: currentState.riskCount,
+})}
+
+SOURCE FILE: ${source}
+${truncated ? `NOTE: Truncated to ${MAX_CHARS} chars.` : ""}
+
+FULL DOCUMENT:
 ${chunk}
 
-CRITICAL RULES:
-1. Extract REAL data from the document — never invent generic placeholders
-2. Use actual names, dates, costs and task names from the document
-3. If a field cannot be found in the document, omit it (do not fill with generic text)
-4. For activities from Excel schedules: extract EVERY row as a separate activity
-5. Map phases correctly — use the phase/section labels from the document
-6. Convert all cost values to GBP numbers only (no currency symbols in JSON)
-7. For completion status: if progress = 1 or 100%, mark _complete as true
+EXTRACTION INSTRUCTIONS:
+1. Use the document analysis above to understand the structure — apply it to extract correctly regardless of template or format.
+2. Extract REAL data only — actual names, dates, task names from the document. Never invent or use generic placeholders.
+3. For every piece of data, assign a confidence: "high" (explicitly stated), "medium" (inferred from context), "low" (uncertain).
+4. CROSS-DOCUMENT ENRICHMENT: If existing data is present above, ADD to it — extract data that fills gaps, don't repeat what's already there.
+5. CONFLICT DETECTION: If this document states something DIFFERENT from existing data (e.g. a different end date), flag it in the conflicts array.
+6. For dates: convert to YYYY-MM-DD. Excel date serials (numbers like 45588) = days since 1900-01-01, subtract 25569 and multiply by 86400000 milliseconds to get real date.
+7. For schedules/task lists: extract EVERY individual task/activity. Use document structure patterns to distinguish tasks from section headers.
+8. Leave fields as empty string/array if not found — do not fill with examples.
 
-Return ONLY valid JSON, no markdown fences, no preamble, no trailing text:
+Return ONLY valid JSON, no markdown, no preamble:
 {
-  "charter":{"projectName":"","purpose":"","problemStatement":"","startDate":"","endDate":"","budget":"","projectManager":"","projectSponsor":"","organisation":"","strategicAlignment":"","withinScope":[],"outOfScope":[]},
-  "team":[{"name":"","role":"","deliveryRole":"","availability":""}],
-  "activities":[{"name":"","phase":"","startDate":"","targetDate":"","responsible":"","_complete":false,"plannedCost":""}],
-  "milestones":[{"name":"","phase":"","targetDate":"","_complete":false}],
-  "risks":[{"name":"","cause":"","potentialImpact":"","likelihood":"2","impact":"2","response":"Reduce","mitigation":"","category":""}],
-  "deliverables":[{"name":"","phase":"","targetDate":"","priority":""}],
-  "stakeholders":[{"name":"","category":"","power":"5","interest":"5","influence":"5","engagementStrategy":""}],
-  "benefits":[{"name":"","category":"","owner":"","targetDate":""}]
+  "documentType": "brief description of what this document is",
+  "charter": {
+    "projectName": {"value":"","confidence":"high|medium|low"},
+    "purpose": {"value":"","confidence":"high|medium|low"},
+    "problemStatement": {"value":"","confidence":"high|medium|low"},
+    "startDate": {"value":"","confidence":"high|medium|low"},
+    "endDate": {"value":"","confidence":"high|medium|low"},
+    "budget": {"value":"","confidence":"high|medium|low"},
+    "projectManager": {"value":"","confidence":"high|medium|low"},
+    "projectSponsor": {"value":"","confidence":"high|medium|low"},
+    "organisation": {"value":"","confidence":"high|medium|low"},
+    "strategicAlignment": {"value":"","confidence":"high|medium|low"}
+  },
+  "team": [{"name":"","role":"","confidence":"high|medium|low"}],
+  "activities": [{"name":"","phase":"","startDate":"","targetDate":"","responsible":"","_complete":false,"plannedCost":"","confidence":"high|medium|low"}],
+  "milestones": [{"name":"","phase":"","targetDate":"","_complete":false,"confidence":"high|medium|low"}],
+  "risks": [{"name":"","cause":"","potentialImpact":"","likelihood":"2","impact":"2","response":"Reduce","mitigation":"","category":"","confidence":"high|medium|low"}],
+  "deliverables": [{"name":"","phase":"","targetDate":"","confidence":"high|medium|low"}],
+  "stakeholders": [{"name":"","category":"","power":"5","interest":"5","influence":"5","engagementStrategy":"","confidence":"high|medium|low"}],
+  "benefits": [{"name":"","category":"","owner":"","targetDate":"","confidence":"high|medium|low"}],
+  "conflicts": [{"field":"","existingValue":"","newValue":"","description":""}],
+  "gaps": ["list of important project fields that could not be found in this document"]
 }`;
 
-    const raw = await callExtract([{ role:"user", content:prompt }], 4000);
+    const raw = await callExtract([{ role:"user", content:extractionPrompt }], 8000);
     let extracted = {};
     try {
       extracted = safeParseJSON(raw);
     } catch(err) {
-      throw new Error("Could not parse extraction response: " + err.message);
+      throw new Error(`Could not parse extraction: ${err.message}`);
     }
 
-    // Map into sheets — PM edits always win (only fill empty fields)
-    const c = sheets["01"]?.data?.charter || {};
-    if (extracted.charter && Object.keys(extracted.charter).some(k => extracted.charter[k])) {
-      const merged = { ...extracted.charter };
-      Object.keys(merged).forEach(k => { if (c[k]) merged[k] = c[k]; });
-      onSheetUpdate("01", { charter: { ...c, ...merged } }, "ai-draft");
+    // ── STEP 4: Apply extracted data with confidence signalling ──────────────
+    // Charter fields — apply with confidence flags, PM edits always win
+    if (extracted.charter) {
+      const c       = sheets["01"]?.data?.charter || {};
+      const updates = {};
+      const needsReview = [];
+
+      Object.entries(extracted.charter).forEach(([key, obj]) => {
+        if (!obj?.value) return;
+        if (c[key]) return; // PM edit wins
+        updates[key] = obj.value;
+        if (obj.confidence === "low") needsReview.push(key);
+      });
+
+      if (Object.keys(updates).length > 0) {
+        onSheetUpdate("01", {
+          charter: { ...c, ...updates },
+          ...(needsReview.length > 0 ? { _needsReview: needsReview } : {}),
+        }, "ai-draft");
+      }
     }
 
+    // Team — enrich existing, add new members
     const existingTeam = sheets["02"]?.data?.teamMembers || [];
-    if (extracted.team?.length > 0 && existingTeam.filter(m => m.name).length === 0) {
-      onSheetUpdate("02", { teamMembers: extracted.team.map((m,i) => ({
-        _id:`TM-${String(i+1).padStart(3,"0")}`, name:m.name||"", role:m.role||"",
-        deliveryRole:m.deliveryRole||"", availability:m.availability||"",
-        loginCode:"", location:"", responsibilities:"",
-      }))}, "ai-draft");
+    if (extracted.team?.length > 0) {
+      const newMembers = extracted.team
+        .filter(m => m.name && !existingTeam.some(e =>
+          e.name?.toLowerCase() === m.name.toLowerCase()
+        ))
+        .map((m,i) => ({
+          _id: `TM-${String(existingTeam.length+i+1).padStart(3,"0")}`,
+          name: m.name, role: m.role||"",
+          deliveryRole:"", availability:"", loginCode:"", location:"", responsibilities:"",
+          _confidence: m.confidence || "high",
+        }));
+      if (newMembers.length > 0) {
+        onSheetUpdate("02", { teamMembers: [...existingTeam, ...newMembers] }, "ai-draft");
+      }
     }
 
+    // Activities — enrich, add new, don't duplicate
     const existingActs  = sheets["03"]?.data?.activities || [];
     const existingMiles = sheets["03"]?.data?.milestones || [];
-    const newActs  = (extracted.activities||[]).map((a,i) => ({
-      _id:`ACT-${String(i+1).padStart(3,"0")}`,
-      name:a.name||"", phase:a.phase||"", startDate:a.startDate||"",
-      targetDate:a.targetDate||"", responsible:a.responsible||"",
-      _complete:a._complete||false, plannedCost:a.plannedCost||"",
-    }));
-    const newMiles = (extracted.milestones||[]).map((m,i) => ({
-      _id:`MS-${String(i+1).padStart(3,"0")}`,
-      name:m.name||"", phase:m.phase||"",
-      targetDate:m.targetDate||"", _complete:m._complete||false,
-    }));
-    if (newActs.length > 0 && existingActs.length === 0) {
-      onSheetUpdate("03", {
-        activities: newActs,
-        milestones: existingMiles.length > 0 ? existingMiles : (newMiles.length > 0 ? newMiles : []),
-      }, "ai-draft");
-    } else if (newMiles.length > 0 && existingMiles.length === 0) {
-      onSheetUpdate("03", { milestones: newMiles }, "ai-draft");
+    if (extracted.activities?.length > 0) {
+      const newActs = extracted.activities
+        .filter(a => a.name && !existingActs.some(e =>
+          e.name?.toLowerCase().trim() === a.name.toLowerCase().trim()
+        ))
+        .map((a,i) => ({
+          _id: `ACT-${String(existingActs.length+i+1).padStart(3,"0")}`,
+          name:a.name, phase:a.phase||"", startDate:a.startDate||"",
+          targetDate:a.targetDate||"", responsible:a.responsible||"",
+          _complete:a._complete||false, plannedCost:a.plannedCost||"",
+          _confidence: a.confidence || "high",
+        }));
+      if (newActs.length > 0 || existingActs.length === 0) {
+        onSheetUpdate("03", {
+          activities: [...existingActs, ...newActs],
+          milestones: existingMiles,
+        }, "ai-draft");
+      }
     }
 
+    if (extracted.milestones?.length > 0) {
+      const newMiles = extracted.milestones
+        .filter(m => m.name && !existingMiles.some(e =>
+          e.name?.toLowerCase().trim() === m.name.toLowerCase().trim()
+        ))
+        .map((m,i) => ({
+          _id: `MS-${String(existingMiles.length+i+1).padStart(3,"0")}`,
+          name:m.name, phase:m.phase||"",
+          targetDate:m.targetDate||"", _complete:m._complete||false,
+          _confidence: m.confidence || "high",
+        }));
+      if (newMiles.length > 0) {
+        const currentActs = sheets["03"]?.data?.activities || [];
+        onSheetUpdate("03", { activities: currentActs, milestones: [...existingMiles, ...newMiles] }, "ai-draft");
+      }
+    }
+
+    // Risks — enrich
     const existingRisks = sheets["05"]?.data?.risks || [];
-    if (extracted.risks?.length > 0 && existingRisks.length === 0) {
-      onSheetUpdate("05", { risks: extracted.risks.map((r,i) => ({
-        _id:`R-${String(101+i)}`, name:r.name||"", cause:r.cause||"",
-        potentialImpact:r.potentialImpact||"",
-        likelihood:r.likelihood||"2", impact:r.impact||"2",
-        response:r.response||"Reduce", mitigation:r.mitigation||"", category:r.category||"",
-      }))}, "ai-draft");
+    if (extracted.risks?.length > 0) {
+      const newRisks = extracted.risks
+        .filter(r => r.name && !existingRisks.some(e =>
+          e.name?.toLowerCase().trim() === r.name.toLowerCase().trim()
+        ))
+        .map((r,i) => ({
+          _id:`R-${String(101+existingRisks.length+i)}`,
+          name:r.name, cause:r.cause||"", potentialImpact:r.potentialImpact||"",
+          likelihood:r.likelihood||"2", impact:r.impact||"2",
+          response:r.response||"Reduce", mitigation:r.mitigation||"", category:r.category||"",
+          _confidence: r.confidence || "high",
+        }));
+      if (newRisks.length > 0) {
+        onSheetUpdate("05", { risks: [...existingRisks, ...newRisks] }, "ai-draft");
+      }
     }
 
+    // Stakeholders and deliverables (full tier)
     if (tier === "full") {
       const existingSH = sheets["08"]?.data?.stakeholders || [];
-      if (extracted.stakeholders?.length > 0 && existingSH.length === 0) {
-        onSheetUpdate("08", { stakeholders: extracted.stakeholders.map((s,i) => ({
-          _id:`SH-${String(i+1).padStart(3,"0")}`, name:s.name||"", category:s.category||"",
-          power:parseInt(s.power)||5, interest:parseInt(s.interest)||5,
-          influence:parseInt(s.influence)||5, ease:5, engagementStrategy:s.engagementStrategy||"",
-        }))}, "ai-draft");
+      if (extracted.stakeholders?.length > 0) {
+        const newSH = extracted.stakeholders
+          .filter(s => s.name && !existingSH.some(e => e.name?.toLowerCase() === s.name.toLowerCase()))
+          .map((s,i) => ({
+            _id:`SH-${String(existingSH.length+i+1).padStart(3,"0")}`,
+            name:s.name, category:s.category||"",
+            power:parseInt(s.power)||5, interest:parseInt(s.interest)||5,
+            influence:parseInt(s.influence)||5, ease:5,
+            engagementStrategy:s.engagementStrategy||"",
+            _confidence: s.confidence || "high",
+          }));
+        if (newSH.length > 0) onSheetUpdate("08", { stakeholders:[...existingSH,...newSH] }, "ai-draft");
       }
       const existingDels = sheets["07"]?.data?.deliverables || [];
-      if (extracted.deliverables?.length > 0 && existingDels.length === 0) {
-        onSheetUpdate("07", { deliverables: extracted.deliverables.map((d,i) => ({
-          _id:`D-${String(i+1).padStart(3,"0")}`, name:d.name||"", phase:d.phase||"",
-          deadlineV1:d.targetDate||"", notes:"", kpis:[], linkedObjectiveId:"", priority:d.priority||"",
-        }))}, "ai-draft");
+      if (extracted.deliverables?.length > 0) {
+        const newDels = extracted.deliverables
+          .filter(d => d.name && !existingDels.some(e => e.name?.toLowerCase() === d.name.toLowerCase()))
+          .map((d,i) => ({
+            _id:`D-${String(existingDels.length+i+1).padStart(3,"0")}`,
+            name:d.name, phase:d.phase||"", deadlineV1:d.targetDate||"",
+            notes:"", kpis:[], linkedObjectiveId:"", priority:"",
+            _confidence: d.confidence || "high",
+          }));
+        if (newDels.length > 0) onSheetUpdate("07", { deliverables:[...existingDels,...newDels] }, "ai-draft");
       }
     }
 
-    // Feed extraction summary into Q&A
-    const summary = [
-      extracted.charter?.projectName && `Project: "${extracted.charter.projectName}"`,
-      extracted.charter?.projectManager && `PM: ${extracted.charter.projectManager}`,
+    // ── STEP 5: Surface conflicts and gaps to the PM via Q&A ─────────────────
+    const conflicts = extracted.conflicts || [];
+    const gaps      = extracted.gaps || [];
+
+    // Build rich summary message
+    const counts = [
       extracted.activities?.length && `${extracted.activities.length} activities`,
       extracted.milestones?.length && `${extracted.milestones.length} milestones`,
       extracted.risks?.length && `${extracted.risks.length} risks`,
@@ -966,8 +1217,41 @@ Return ONLY valid JSON, no markdown fences, no preamble, no trailing text:
 
     setQaMessages(prev => [...prev, {
       role:"system",
-      text:`✓ Extracted from ${source}: ${summary || "no structured data found — check document format"}`,
+      text:`✓ ${extracted.documentType || "Document"} — extracted: ${counts || "see sheets"}`,
     }]);
+
+    // Surface conflicts
+    if (conflicts.length > 0) {
+      conflicts.forEach(conflict => {
+        setQaMessages(prev => [...prev, {
+          role:"conflict",
+          field:        conflict.field,
+          existingValue: conflict.existingValue,
+          newValue:     conflict.newValue,
+          description:  conflict.description,
+          source,
+        }]);
+      });
+    }
+
+    // Surface gaps via Q&A for fields the document couldn't fill
+    if (gaps.length > 0) {
+      setQaMessages(prev => [...prev, {
+        role:"system",
+        text:`⚠ Not found in this document: ${gaps.slice(0,5).join(", ")}${gaps.length > 5 ? ` +${gaps.length-5} more` : ""}. The AI Setup Assistant will ask about these.`,
+      }]);
+    }
+
+    // Trigger Q&A only for fields still unpopulated
+    const firstUnanswered = questions.findIndex(q => !areFieldsPopulated(q.fields));
+    if (firstUnanswered !== -1 && qaMessages.filter(m => m.role==="ai" && m.qId).length === 0) {
+      askQuestion(firstUnanswered);
+    } else if (firstUnanswered === -1) {
+      setQaMessages(prev => [...prev, {
+        role:"system",
+        text:"✓ All key project fields populated. Review and adjust sheets as needed.",
+      }]);
+    }
   };
 
   // ── Sheet navigation with dirty check ────────────────────────────────────
@@ -1362,6 +1646,53 @@ Only suggest a name if you have reasonable context to infer it. Otherwise return
                   <div key={i} style={{ fontSize:10, color:C.accentL, padding:"4px 0",
                     borderBottom:`1px solid ${C.border}22`, marginBottom:4 }}>
                     {msg.text}
+                  </div>
+                );
+                if (msg.role === "conflict") return (
+                  <div key={i} style={{ background:"rgba(224,162,58,0.08)", border:`1px solid ${C.milestone}44`,
+                    borderLeft:`3px solid ${C.milestone}`, borderRadius:7, padding:"10px 12px", marginBottom:10 }}>
+                    <div style={{ fontSize:10, fontWeight:700, color:C.milestone, marginBottom:5,
+                      textTransform:"uppercase", letterSpacing:".4px" }}>
+                      ⚠ Conflict detected — {msg.field}
+                    </div>
+                    <div style={{ fontSize:11, color:C.dim, marginBottom:8, lineHeight:1.5 }}>
+                      {msg.description}
+                    </div>
+                    <div style={{ display:"flex", gap:8, marginBottom:8 }}>
+                      <div style={{ flex:1, background:C.surface, borderRadius:5, padding:"6px 9px", fontSize:10 }}>
+                        <div style={{ color:C.muted, marginBottom:2 }}>Current value</div>
+                        <div style={{ color:C.sage }}>{msg.existingValue || "—"}</div>
+                      </div>
+                      <div style={{ flex:1, background:C.surface, borderRadius:5, padding:"6px 9px", fontSize:10 }}>
+                        <div style={{ color:C.muted, marginBottom:2 }}>From {msg.source}</div>
+                        <div style={{ color:C.milestone }}>{msg.newValue || "—"}</div>
+                      </div>
+                    </div>
+                    <div style={{ display:"flex", gap:6 }}>
+                      <button onClick={() => {
+                        // Keep existing — dismiss conflict
+                        setQaMessages(prev => prev.map((m,j) => j===i ? {...m, resolved:"kept"} : m));
+                      }} style={{ flex:1, padding:"5px", background:"none",
+                        border:`1px solid ${C.border}`, borderRadius:4,
+                        color:C.muted, fontSize:10, cursor:"pointer" }}>
+                        Keep current
+                      </button>
+                      <button onClick={() => {
+                        // Use new value — apply to charter
+                        const charter = sheets["01"]?.data?.charter || {};
+                        onSheetUpdate("01", { charter: { ...charter, [msg.field]: msg.newValue } }, "ai-draft");
+                        setQaMessages(prev => prev.map((m,j) => j===i ? {...m, resolved:"updated"} : m));
+                      }} style={{ flex:1, padding:"5px", background:C.milestone+"22",
+                        border:`1px solid ${C.milestone}44`, borderRadius:4,
+                        color:C.milestone, fontSize:10, fontWeight:700, cursor:"pointer" }}>
+                        Use new value
+                      </button>
+                    </div>
+                    {msg.resolved && (
+                      <div style={{ fontSize:10, color:C.muted, marginTop:5, fontStyle:"italic" }}>
+                        {msg.resolved === "kept" ? "✓ Kept existing value" : "✓ Updated to new value"}
+                      </div>
+                    )}
                   </div>
                 );
                 if (msg.role === "user") return (
