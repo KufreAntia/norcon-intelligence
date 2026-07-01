@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { generateLoginCode } from "../store/appStore.js";
+import { generateLoginCode } from "../../store/appStore.js";
 
 const C = { surface:"#122E1E", surface2:"#183D28", border:"#1F4D34", accent:"#2E7D52", accentL:"#3a9962", sage:"#E5F0E8", dim:"#8aac96", muted:"#5a7a66", risk:"#e05c5c", milestone:"#e0a23a" };
 const inp = { width:"100%", background:C.surface2, border:`1px solid ${C.border}`, borderRadius:5, color:C.sage, fontSize:12, padding:"7px 10px", outline:"none", boxSizing:"border-box", fontFamily:"inherit" };
