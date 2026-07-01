@@ -306,7 +306,7 @@ export default function DocumentIntelligenceLayer({ onSendToPersonalisation, onS
     const pn     = projName ? 'Project name: "' + projName + '". ' : "";
 
     const prompt =
-      "You are the Document Intelligence Engine for NorCon Projects — an expert project management AI.\n" +
+      "You are the Document Intelligence Engine for NorCon Projects — an expert project management AI with Sage level knowledge of APM body of knowledge.\n" +
       (pn ? pn + "\n" : "") +
       (hint ? hint + "\n" : "") +
       `
@@ -317,81 +317,8 @@ MODE 2 — RECOMMENDATION: Where standard project elements are logically expecte
 
 Return ONLY the JSON — no markdown, no backticks, no explanation, no text before or after.
 
-═══════════════════════════════════════════════
-INTELLIGENCE RULES
-═══════════════════════════════════════════════
 
-═══════════════════════════════════════════════
-PROJECT MANAGEMENT HIERARCHY — CRITICAL
-═══════════════════════════════════════════════
 
-You must understand and strictly apply the NorCon project management hierarchy. Confusing these levels is the most common error — read carefully.
-
-BENEFIT — the VALUE realised by the project. High-level, strategic, outcome-focused. Answers: "Why does this project exist? What improvement will it create for the organisation or community?"
-  Examples of CORRECT benefits:
-  ✓ "Improved student employability outcomes"
-  ✓ "Increased community access to professional networks"
-  ✓ "Enhanced organisational capacity for future projects"
-  Examples of WRONG benefits (these are objectives or activities, not benefits):
-  ✗ "Deliver a mentorship programme" — this is a deliverable
-  ✗ "Hold 10 workshops" — this is an activity
-  ✗ "Create a database of mentors" — this is a deliverable
-
-OBJECTIVE — the OUTCOME STATE that must be achieved for the benefit to be realised. High-level, measurable, describes a condition that will exist when the benefit is on track. NOT a task. NOT an action. Answers: "What must be true for this benefit to happen?"
-  Examples of CORRECT objectives (for benefit "Improved student employability"):
-  ✓ "Students complete the programme with demonstrable industry skills and connections"
-  ✓ "Employer partners recognise programme graduates as work-ready candidates"
-  Examples of WRONG objectives (these are activities or deliverables):
-  ✗ "Recruit 20 mentors" — this is an activity
-  ✗ "Deliver 10 workshops" — this is an activity
-  ✗ "Build a mentor matching platform" — this is a deliverable
-  LIMIT: maximum 5 objectives per benefit. Quality over quantity. If you find yourself writing more than 5, merge or elevate them.
-
-DELIVERABLE — the TANGIBLE OUTPUT produced by the project. A thing that is created, built, or produced. Answers: "What will exist at the end that did not exist before?"
-  Examples: Mentorship programme, Training materials, Digital platform, Event series, Policy document
-
-ACTIVITY — an ACTION taken to produce a deliverable. A task, a step, a piece of work. Answers: "What does the team DO to create the deliverable?"
-  Examples: Recruit mentors, Design workshop content, Build website, Conduct stakeholder interviews
-
-THE TEST: If it sounds like something you could put on a to-do list → it is an ACTIVITY, not an objective.
-If it describes a thing that will be built or created → it is a DELIVERABLE, not an objective.
-If it describes a state of the world being better in some way → it is a BENEFIT or OBJECTIVE.
-
-BENEFITS EXTRACTION RULES:
-- Benefits are rarely labelled "benefit" in a brief. Find them in: purpose statements, problem statements, expected outcomes, strategic goals, "we aim to...", "this will result in...", "the project will improve...".
-- If no benefits are stated, DERIVE them from what the project is trying to achieve. Every project exists to create value — name that value.
-- Minimum 2 benefits, maximum 6 benefits per project.
-- Benefit categories: Strategic | Operational | Financial | Stakeholder | Community | Environmental | Knowledge | Capability | Reputational | Social
-
-OBJECTIVES RULES:
-- Maximum 5 objectives per benefit.
-- Each objective must be an outcome state, not an action.
-- Run the test: does it sound like a task? If yes, move it to activities. Does it describe something built? Move it to deliverables.
-
-DELIVERABLES + KPIs (cross-field derivation):
-- For every deliverable found or inferred, create at least one KPI measuring its completion or quality.
-- KPI name should be specific and measurable: not "success" but "number of students completing mentorship" or "% of workshops rated good or excellent".
-- If baseline is unknown, set it to "0" for new initiatives or leave empty for existing programmes.
-- Target should be a specific number or % derived from context (e.g. if brief mentions "200 participants", target = "200").
-
-RISKS (always recommend standard risks):
-- Extract all explicit risks.
-- Additionally recommend standard risks for this project type that are absent. Examples: digital projects → data protection, cybersecurity, user adoption. Community projects → volunteer attrition, venue availability. Construction → H&S, weather, supply chain.
-- Minimum 4 risks per project.
-
-STAKEHOLDERS:
-- Extract named individuals and organisations.
-- Infer obvious stakeholders not named: funders, end users, regulatory bodies, community groups — based on project context.
-- Assign power/interest/influence scores (1-10) based on their role and relationship to the project.
-
-ACTIVITIES + MILESTONES:
-- Extract all explicitly described tasks and events.
-- Infer a logical set of phase-based activities if not fully described (e.g. planning, procurement, delivery, review).
-- Every project should have at least one milestone per phase.
-
-TEAM:
-- Extract any named individuals with roles.
-- Infer expected roles if not named (e.g. "a Project Manager will be needed", "a Communications Lead is implied by the stakeholder engagement requirements").
 
 ═══════════════════════════════════════════════
 JSON SCHEMA
