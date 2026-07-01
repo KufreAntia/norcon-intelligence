@@ -52,9 +52,6 @@ const scheduleLast = (arr) => [...arr, "03"];
 
 const CLUSTERS = {
   "02": [
-    { id:"t1", title:"Who's running this?", fields:[
-      { key:"projectManager", label:"Project Manager", type:"text", required:true },
-    ]},
     { id:"t2", title:"Core team", fields:[
       { key:"teamRoles", label:"Team roles needed", type:"roles" },
     ]},
@@ -78,11 +75,7 @@ const CLUSTERS = {
       { key:"budget", label:"Total Budget", type:"text", placeholder:"e.g. 5000 or N/A" },
     ]},
   ],
-  "04": [
-    { id:"r1", title:"Responsibilities", fields:[
-      { key:"raciNote", label:"Any specific responsibility splits to note?", type:"textarea", optional:true },
-    ]},
-  ],
+  "04": [],
   "05": [
     { id:"rk1", title:"What could go wrong?", fields:[
       { key:"risks", label:"Key risks", type:"chips-multi", aiChips:true },
@@ -98,11 +91,7 @@ const CLUSTERS = {
       { key:"benefits", label:"Strategic benefits", type:"chips-multi", aiChips:true },
     ]},
   ],
-  "06": [
-    { id:"cc1", title:"Change approval", fields:[
-      { key:"changeThreshold", label:"What level of change needs formal approval?", type:"textarea", optional:true },
-    ]},
-  ],
+  "06": [],
   "10": [
     { id:"sus1", title:"Sustainability focus", fields:[
       { key:"sustainFocus", label:"Any sustainability priorities for this project?", type:"chips-multi", aiChips:true, optional:true },
@@ -117,9 +106,17 @@ const CLUSTERS = {
 
 function safeParseJSON(raw) {
   if (!raw || typeof raw !== "string") throw new Error("Empty response");
+  // Strip markdown fences
   let clean = raw.replace(/^```(?:json)?\s*/i,"").replace(/\s*```\s*$/,"").trim();
+  // Handle Claude preamble ("Here's the result:\n\n{...") by finding the outermost JSON object
+  const firstBrace = clean.indexOf("{");
+  const lastBrace  = clean.lastIndexOf("}");
+  if (firstBrace !== -1 && lastBrace > firstBrace) {
+    clean = clean.slice(firstBrace, lastBrace + 1);
+  }
   try { return JSON.parse(clean); }
   catch(e1) {
+    // Attempt brace-balancing recovery on truncated responses
     let attempt = clean;
     let braces=0, brackets=0, inStr=false, escape=false;
     for (let i=0;i<attempt.length;i++){
@@ -369,11 +366,13 @@ function PMSetup({ tier, onConfirm, onBack }) {
 function ReviewModal({ sheets, tier, onUpdate, onClose }) {
   const charter = sheets["01"]?.data?.charter || {};
   const team    = sheets["02"]?.data?.teamMembers || [];
-  const acts    = sheets["03"]?.data?.activities || [];
-  const miles   = sheets["03"]?.data?.milestones || [];
-  const risks   = sheets["05"]?.data?.risks || [];
+  const acts         = sheets["03"]?.data?.activities || [];
+  const miles        = sheets["03"]?.data?.milestones || [];
+  const risks        = sheets["05"]?.data?.risks || [];
   const stakeholders = sheets["08"]?.data?.stakeholders || [];
-  const benefits      = sheets["07"]?.data?.deliverables || [];
+  // C1 fix: benefits live in charter.benefits, not KD Tracker
+  const charter0     = sheets["01"]?.data?.charter || {};
+  const benefits     = charter0.benefits || [];
 
   const cell = { background:"transparent", border:"none", color:C.sage, fontSize:11,
     padding:"6px 8px", outline:"none", width:"100%", fontFamily:"inherit" };
@@ -418,9 +417,14 @@ function ReviewModal({ sheets, tier, onUpdate, onClose }) {
   const removeSH = (idx) => onUpdate("08", { stakeholders: stakeholders.filter((_,i)=>i!==idx) }, "in-progress");
   const updateBenField = (idx, field, value) => {
     const next = benefits.map((b,i)=>i===idx?{...b,[field]:value}:b);
-    onUpdate("07", { deliverables: next }, "in-progress");
+    const currentCharter = sheets["01"]?.data?.charter || {};
+    onUpdate("01", { charter: { ...currentCharter, benefits: next } }, "in-progress");
   };
-  const removeBen = (idx) => onUpdate("07", { deliverables: benefits.filter((_,i)=>i!==idx) }, "in-progress");
+  const removeBen = (idx) => {
+    const next = benefits.filter((_,i)=>i!==idx);
+    const currentCharter = sheets["01"]?.data?.charter || {};
+    onUpdate("01", { charter: { ...currentCharter, benefits: next } }, "in-progress");
+  };
 
   const overviewFields = [
     ["projectName","Project Name"], ["projectCode","Project Code"],
@@ -561,12 +565,13 @@ function ReviewModal({ sheets, tier, onUpdate, onClose }) {
               <Section title="Benefits" count={benefits.length}>
                 {benefits.length===0 ? <EmptyNote/> : (
                   <table style={{ width:"100%", borderCollapse:"collapse", fontSize:11 }}>
-                    <thead><tr>{["Benefit","Category",""].map(h=><th key={h} style={th}>{h}</th>)}</tr></thead>
+                    <thead><tr>{["Benefit Name","Category","Owner",""].map(h=><th key={h} style={th}>{h}</th>)}</tr></thead>
                     <tbody>
                       {benefits.map((b,i)=>(
                         <tr key={i} style={td}>
                           <td><input style={cell} value={b.name||""} onChange={e=>updateBenField(i,"name",e.target.value)}/></td>
-                          <td><input style={cell} value={b.phase||""} onChange={e=>updateBenField(i,"phase",e.target.value)}/></td>
+                          <td><input style={cell} value={b.category||""} onChange={e=>updateBenField(i,"category",e.target.value)}/></td>
+                          <td><input style={cell} value={b.owner||""} onChange={e=>updateBenField(i,"owner",e.target.value)}/></td>
                           <td><button onClick={()=>removeBen(i)} style={{ background:"none", border:"none", color:C.risk, cursor:"pointer", fontSize:12 }}>✕</button></td>
                         </tr>
                       ))}
@@ -628,9 +633,9 @@ export default function ProjectSetup({ state, onSheetUpdate, onSheetApprove, onS
       case "teamRoles":      return (sheets["02"]?.data?.teamMembers||[]).filter(m=>!m.isPM).length > 0;
       case "risks":          return (sheets["05"]?.data?.risks||[]).length > 0;
       case "stakeholders":   return (sheets["08"]?.data?.stakeholders||[]).length > 0;
-      case "benefits":       return (sheets["07"]?.data?.deliverables||[]).length > 0;
-      case "raciNote": case "changeThreshold": case "sustainFocus": case "keyMilestones":
-        return false;
+      case "benefits":       return (sheets["01"]?.data?.charter?.benefits||[]).length > 0;
+      case "sustainFocus":   return false; // always optional, never auto-skip
+      case "keyMilestones":  return false;
       default: return false;
     }
   };
@@ -698,26 +703,50 @@ CONTENT:
 ${chunk}
 
 Extract REAL data only, never invent placeholders. Leave fields empty if not found. Dates as YYYY-MM-DD (Excel serial N = days since 1900-01-01).
+For risk likelihood and impact use ONLY these values: "1 - Low", "2 - Medium", "3 - High".
+For activities: leave responsible blank — the PM will assign roles in the Schedule sheet.
 Return ONLY JSON, no markdown:
-{"charter":{"projectName":"","purpose":"","problemStatement":"","startDate":"","endDate":"","budget":"","projectManager":"","projectSponsor":"","organisation":""},"team":[{"name":"","role":""}],"activities":[{"name":"","phase":"","startDate":"","targetDate":"","_complete":false,"plannedCost":""}],"milestones":[{"name":"","phase":"","targetDate":"","_complete":false}],"risks":[{"name":"","cause":"","potentialImpact":"","likelihood":"2","impact":"2","response":"Reduce","mitigation":"","category":""}],"stakeholders":[{"name":"","category":"","power":"5","interest":"5","influence":"5"}],"benefits":[{"name":"","category":"","owner":"","targetDate":""}]}`;
+{"charter":{"projectName":"","purpose":"","problemStatement":"","startDate":"","endDate":"","budget":"","projectManager":"","projectSponsor":"","organisation":"","strategicAlignment":"","withinScope":[],"outOfScope":[]},"team":[{"name":"","role":""}],"activities":[{"name":"","phase":"","startDate":"","targetDate":"","_complete":false,"plannedCost":""}],"milestones":[{"name":"","phase":"","targetDate":"","_complete":false}],"risks":[{"name":"","cause":"","potentialImpact":"","likelihood":"2 - Medium","impact":"2 - Medium","response":"Reduce","mitigation":"","category":""}],"stakeholders":[{"name":"","category":"","power":"5","interest":"5","influence":"5","ease":"5"}],"benefits":[{"name":"","description":"","category":"Strategic","owner":"","targetDate":""}]}`;
 
     const raw = await callExtract([{role:"user",content:prompt}], 8000);
     const extracted = safeParseJSON(raw);
 
+    // ── Charter (C2: now includes strategicAlignment, withinScope, outOfScope) ──
     if (extracted.charter) {
       const c = sheets["01"]?.data?.charter || {};
       const updates = {};
-      Object.entries(extracted.charter).forEach(([k,v]) => { if (v && !c[k]) updates[k]=v; });
+      Object.entries(extracted.charter).forEach(([k,v]) => {
+        if (!v || c[k]) return; // PM edits always win
+        if (Array.isArray(v) && v.length === 0) return; // skip empty arrays
+        updates[k] = v;
+      });
       if (Object.keys(updates).length) onSheetUpdate("01", { charter:{...c,...updates} }, "ai-draft");
     }
+
+    // ── C1 fix: benefits write to charter.benefits, not KD Tracker deliverables ──
+    if (extracted.benefits?.length) {
+      const c = sheets["01"]?.data?.charter || {};
+      const existingBens = c.benefits || [];
+      const newBens = extracted.benefits.filter(b=>b.name && !existingBens.some(e=>e.name?.toLowerCase()===b.name.toLowerCase()))
+        .map((b,i)=>({
+          _id:`BEN-${String(existingBens.length+i+1).padStart(3,"0")}`,
+          name:b.name, description:b.description||"", category:b.category||"Strategic",
+          owner:b.owner||"", targetDate:b.targetDate||"",
+          sustainmentPlan:"", lessonsLearned:"", objectives:[],
+        }));
+      if (newBens.length) {
+        const current = sheets["01"]?.data?.charter || {};
+        onSheetUpdate("01", { charter:{...current, benefits:[...existingBens,...newBens]} }, "ai-draft");
+      }
+    }
+
     const existingTeam = sheets["02"]?.data?.teamMembers || [];
     const SINGLE_HOLDER_ROLES = ["Project Manager", "Project Sponsor"];
     if (extracted.team?.length) {
       const existingCodes = [...(l2?.loginCodes||[]).map(m=>m.loginCode), ...existingTeam.map(m=>m.loginCode).filter(Boolean)];
       const newM = extracted.team.filter(m => {
         if (!m.name) return false;
-        if (SINGLE_HOLDER_ROLES.includes(m.role) &&
-            existingTeam.some(e => e.role === m.role)) return false;
+        if (SINGLE_HOLDER_ROLES.includes(m.role) && existingTeam.some(e => e.role === m.role)) return false;
         return !existingTeam.some(e => e.name?.toLowerCase() === m.name.toLowerCase());
       }).map((m,i)=>{
         const code = generateLoginCode(project?.code || "NC", existingCodes);
@@ -727,44 +756,67 @@ Return ONLY JSON, no markdown:
       });
       if (newM.length) {
         onSheetUpdate("02", { teamMembers:[...existingTeam,...newM] }, "ai-draft");
-        // Also register each new member's login code so L3 can see them
-        newM.forEach(m => {
-          onSheetUpdate("__loginCode__", {}, "empty", {
-            loginCode: m.loginCode, name: m.name, role: m.role, isPM: false,
-          });
-        });
+        // App.jsx handleSheetUpdate("02") now auto-syncs to l2.loginCodes (H1 fix in Batch 1)
       }
     }
-    const existingActs = sheets["03"]?.data?.activities || [];
+
+    const existingActs  = sheets["03"]?.data?.activities || [];
     const existingMiles = sheets["03"]?.data?.milestones || [];
     if (extracted.activities?.length) {
       const newA = extracted.activities.filter(a=>a.name && !existingActs.some(e=>e.name?.toLowerCase().trim()===a.name.toLowerCase().trim()))
-        .map((a,i)=>({_id:`ACT-${String(existingActs.length+i+1).padStart(3,"0")}`,name:a.name,phase:a.phase||"",startDate:a.startDate||"",targetDate:a.targetDate||"",responsible:"",_complete:a._complete||false,plannedCost:a.plannedCost||""}));
+        .map((a,i)=>({
+          _id:`ACT-${String(existingActs.length+i+1).padStart(3,"0")}`,
+          name:a.name, phase:a.phase||"", startDate:a.startDate||"",
+          targetDate:a.targetDate||"",
+          responsible:"",          // C4 fix: never write extracted person names into responsible
+          _complete:a._complete||false, _state:a._complete?"complete":"pending",
+          plannedCost:a.plannedCost||"",
+        }));
       if (newA.length) onSheetUpdate("03", { activities:[...existingActs,...newA], milestones:existingMiles }, "ai-draft");
     }
     if (extracted.milestones?.length) {
       const newMs = extracted.milestones.filter(m=>m.name && !existingMiles.some(e=>e.name?.toLowerCase().trim()===m.name.toLowerCase().trim()))
-        .map((m,i)=>({_id:`MS-${String(existingMiles.length+i+1).padStart(3,"0")}`,name:m.name,phase:m.phase||"",targetDate:m.targetDate||"",_complete:m._complete||false}));
+        .map((m,i)=>({
+          _id:`MS-${String(existingMiles.length+i+1).padStart(3,"0")}`,
+          name:m.name, phase:m.phase||"", targetDate:m.targetDate||"",
+          _complete:m._complete||false, _state:m._complete?"complete":"pending",
+        }));
       if (newMs.length) { const acts=sheets["03"]?.data?.activities||[]; onSheetUpdate("03", { activities:acts, milestones:[...existingMiles,...newMs] }, "ai-draft"); }
     }
+
     const existingRisks = sheets["05"]?.data?.risks || [];
     if (extracted.risks?.length) {
+      // H2 fix: normalise raw numeric levels to the "N - Label" format Sheet05 expects
+      const normLevel = (v) => {
+        if (!v) return "2 - Medium";
+        const s = String(v).trim();
+        if (s.includes("-")) return s; // already in correct format
+        const n = parseInt(s);
+        if (n === 1) return "1 - Low";
+        if (n === 3) return "3 - High";
+        return "2 - Medium";
+      };
       const newR = extracted.risks.filter(r=>r.name && !existingRisks.some(e=>e.name?.toLowerCase().trim()===r.name.toLowerCase().trim()))
-        .map((r,i)=>({_id:`R-${String(101+existingRisks.length+i)}`,name:r.name,cause:r.cause||"",potentialImpact:r.potentialImpact||"",likelihood:r.likelihood||"2",impact:r.impact||"2",response:r.response||"Reduce",mitigation:r.mitigation||"",category:r.category||""}));
+        .map((r,i)=>({
+          _id:`R-${String(101+existingRisks.length+i)}`, name:r.name, cause:r.cause||"",
+          potentialImpact:r.potentialImpact||"",
+          likelihood:normLevel(r.likelihood), impact:normLevel(r.impact),
+          response:r.response||"Reduce", mitigation:r.mitigation||"", category:r.category||"",
+        }));
       if (newR.length) onSheetUpdate("05", { risks:[...existingRisks,...newR] }, "ai-draft");
     }
+
     if (tier === "full") {
       const existingSH = sheets["08"]?.data?.stakeholders || [];
       if (extracted.stakeholders?.length) {
         const newSH = extracted.stakeholders.filter(s=>s.name && !existingSH.some(e=>e.name?.toLowerCase()===s.name.toLowerCase()))
-          .map((s,i)=>({_id:`SH-${String(existingSH.length+i+1).padStart(3,"0")}`,name:s.name,category:s.category||"",power:parseInt(s.power)||5,interest:parseInt(s.interest)||5,influence:parseInt(s.influence)||5,ease:5,engagementStrategy:""}));
+          .map((s,i)=>({
+            _id:`SH-${String(existingSH.length+i+1).padStart(3,"0")}`, name:s.name, category:s.category||"",
+            power:parseInt(s.power)||5, interest:parseInt(s.interest)||5,
+            influence:parseInt(s.influence)||5, ease:parseInt(s.ease)||5,
+            status:"Identified", scoreHistory:[], statusHistory:[], engagementStrategy:"",
+          }));
         if (newSH.length) onSheetUpdate("08", { stakeholders:[...existingSH,...newSH] }, "ai-draft");
-      }
-      const existingDels = sheets["07"]?.data?.deliverables || [];
-      if (extracted.benefits?.length) {
-        const newD = extracted.benefits.filter(b=>b.name && !existingDels.some(e=>e.name?.toLowerCase()===b.name.toLowerCase()))
-          .map((b,i)=>({_id:`D-${String(existingDels.length+i+1).padStart(3,"0")}`,name:b.name,phase:b.category||"",deadlineV1:b.targetDate||"",notes:"",kpis:[],linkedObjectiveId:"",priority:""}));
-        if (newD.length) onSheetUpdate("07", { deliverables:[...existingDels,...newD] }, "ai-draft");
       }
     }
     setAiStatus("");
@@ -803,8 +855,11 @@ Return ONLY JSON, no markdown:
   const handleTextExtract = async () => {
     if (!pasteText.trim()) return;
     setExtracting(true);
-    try { await runExtraction(pasteText, "your notes"); setPasteText(""); }
-    catch(err) { setAiStatus(`⚠ ${err.message}`); }
+    try {
+      await runExtraction(pasteText, "your notes");
+      setFileList(prev => [...prev, "Pasted text"]);
+      setPasteText("");
+    } catch(err) { setAiStatus(`⚠ ${err.message}`); }
     setExtracting(false);
   };
 
@@ -866,7 +921,7 @@ If no clear milestones are described, return {"milestones":[]}`;
         if (parsed.milestones?.length) {
           const existingMiles = sheets["03"]?.data?.milestones || [];
           const newMiles = parsed.milestones.filter(m=>m.name && !existingMiles.some(e=>e.name?.toLowerCase().trim()===m.name.toLowerCase().trim()))
-            .map((m,i)=>({_id:`MS-${String(existingMiles.length+i+1).padStart(3,"0")}`, name:m.name, phase:"", targetDate:m.targetDate||"", _complete:false}));
+            .map((m,i)=>({_id:`MS-${String(existingMiles.length+i+1).padStart(3,"0")}`, name:m.name, phase:"", targetDate:m.targetDate||"", _complete:false, _state:"pending"}));
           if (newMiles.length) {
             const acts = sheets["03"]?.data?.activities || [];
             onSheetUpdate("03", { activities:acts, milestones:[...existingMiles,...newMiles] }, "in-progress");
@@ -874,11 +929,6 @@ If no clear milestones are described, return {"milestones":[]}`;
         }
       } catch(e) { /* non-fatal — milestone parsing failure shouldn't block wizard */ }
       setAiStatus("");
-      return;
-    }
-    if (key === "raciNote" || key === "changeThreshold" || key === "sustainFocus") {
-      const c = sheets["01"]?.data?.charter || {};
-      onSheetUpdate("01", { charter: { ...c, [`_note_${key}`]: value } }, "in-progress");
     }
   };
 
@@ -909,33 +959,88 @@ If no clear milestones are described, return {"milestones":[]}`;
   };
   const getTeamMemberByRole = (role) => (sheets["02"]?.data?.teamMembers||[]).find(m => m.role === role);
 
+  // Map sustainability focus area names to their dimension IDs
+  const AREA_TO_DIMENSION = {
+    "Resource Use":"environmental","Travel":"environmental","Waste":"environmental","Digital Delivery":"environmental",
+    "Accessibility":"social","Diversity":"social","Community Benefit":"social","Wellbeing":"social","Skills Development":"social",
+    "Transparency":"governance","Accountability":"governance","Data Protection":"governance","Risk Management":"governance",
+    "Knowledge Creation":"legacy","Skills Transfer":"legacy","Partnerships":"legacy","Project Continuity":"legacy",
+  };
+
   const addChipItem = (fieldKey, item) => {
     if (fieldKey === "risks") {
       const existing = sheets["05"]?.data?.risks || [];
       if (existing.some(r=>r.name===item)) return;
-      onSheetUpdate("05", { risks:[...existing, { _id:`R-${101+existing.length}`, name:item, cause:"", potentialImpact:"", likelihood:"2", impact:"2", response:"Reduce", mitigation:"", category:"" }] }, "in-progress");
+      // H2 fix: store risk levels in the format Sheet05 dropdown expects
+      onSheetUpdate("05", { risks:[...existing, {
+        _id:`R-${101+existing.length}`, name:item, cause:"", potentialImpact:"",
+        likelihood:"2 - Medium", impact:"2 - Medium", response:"Reduce", mitigation:"", category:"",
+      }] }, "in-progress");
     } else if (fieldKey === "stakeholders") {
       const existing = sheets["08"]?.data?.stakeholders || [];
       if (existing.some(s=>s.name===item)) return;
-      onSheetUpdate("08", { stakeholders:[...existing, { _id:`SH-${String(existing.length+1).padStart(3,"0")}`, name:item, category:"", power:5, interest:5, influence:5, ease:5, engagementStrategy:"" }] }, "in-progress");
+      onSheetUpdate("08", { stakeholders:[...existing, {
+        _id:`SH-${String(existing.length+1).padStart(3,"0")}`, name:item, category:"",
+        power:5, interest:5, influence:5, ease:5, status:"Identified",
+        scoreHistory:[], statusHistory:[], engagementStrategy:"",
+      }] }, "in-progress");
     } else if (fieldKey === "benefits") {
-      const existing = sheets["07"]?.data?.deliverables || [];
-      if (existing.some(d=>d.name===item)) return;
-      onSheetUpdate("07", { deliverables:[...existing, { _id:`D-${String(existing.length+1).padStart(3,"0")}`, name:item, phase:"", deadlineV1:"", notes:"", kpis:[], linkedObjectiveId:"", priority:"" }] }, "in-progress");
+      // C1 fix: write to charter.benefits not KD Tracker deliverables
+      const charter  = sheets["01"]?.data?.charter || {};
+      const existing = charter.benefits || [];
+      if (existing.some(b=>b.name===item)) return;
+      const newBenefit = {
+        _id:`BEN-${String(existing.length+1).padStart(3,"0")}`,
+        name:item, description:"", category:"Strategic",
+        owner:"", targetDate:"", sustainmentPlan:"", lessonsLearned:"", objectives:[],
+      };
+      onSheetUpdate("01", { charter:{ ...charter, benefits:[...existing, newBenefit] } }, "in-progress");
     } else if (fieldKey === "sustainFocus") {
-      const existing = sheets["10"]?.data?.selected || {};
-      onSheetUpdate("10", { selected: { ...existing, [item]: true } }, "in-progress");
+      // C3 fix: write dimension-aware shape { dimensionId: [area1, area2] }
+      const existing  = sheets["10"]?.data?.selected  || {};
+      const enab      = sheets["10"]?.data?.enabled    || {};
+      const actLinks  = sheets["10"]?.data?.actLinks   || {};
+      const dimId     = AREA_TO_DIMENSION[item] || "environmental";
+      const dimAreas  = existing[dimId] || [];
+      if (dimAreas.includes(item)) return;
+      onSheetUpdate("10", {
+        enabled:  { ...enab, [dimId]: true },
+        selected: { ...existing, [dimId]: [...dimAreas, item] },
+        actLinks,
+      }, "in-progress");
     }
   };
   const removeChipItem = (fieldKey, item) => {
-    if (fieldKey === "risks") onSheetUpdate("05", { risks:(sheets["05"]?.data?.risks||[]).filter(r=>r.name!==item) }, "in-progress");
-    else if (fieldKey === "stakeholders") onSheetUpdate("08", { stakeholders:(sheets["08"]?.data?.stakeholders||[]).filter(s=>s.name!==item) }, "in-progress");
-    else if (fieldKey === "benefits") onSheetUpdate("07", { deliverables:(sheets["07"]?.data?.deliverables||[]).filter(d=>d.name!==item) }, "in-progress");
+    if (fieldKey === "risks") {
+      onSheetUpdate("05", { risks:(sheets["05"]?.data?.risks||[]).filter(r=>r.name!==item) }, "in-progress");
+    } else if (fieldKey === "stakeholders") {
+      onSheetUpdate("08", { stakeholders:(sheets["08"]?.data?.stakeholders||[]).filter(s=>s.name!==item) }, "in-progress");
+    } else if (fieldKey === "benefits") {
+      // C1 fix: remove from charter.benefits
+      const charter = sheets["01"]?.data?.charter || {};
+      onSheetUpdate("01", { charter:{ ...charter, benefits:(charter.benefits||[]).filter(b=>b.name!==item) } }, "in-progress");
+    } else if (fieldKey === "sustainFocus") {
+      // C3 fix: remove from the correct dimension array
+      const existing = sheets["10"]?.data?.selected || {};
+      const enab     = sheets["10"]?.data?.enabled  || {};
+      const actLinks = sheets["10"]?.data?.actLinks  || {};
+      const dimId    = AREA_TO_DIMENSION[item] || "environmental";
+      const next     = { ...existing, [dimId]: (existing[dimId]||[]).filter(a=>a!==item) };
+      onSheetUpdate("10", { enabled:enab, selected:next, actLinks }, "in-progress");
+    }
   };
   const getChipItems = (fieldKey) => {
     if (fieldKey === "risks") return (sheets["05"]?.data?.risks||[]).map(r=>r.name);
     if (fieldKey === "stakeholders") return (sheets["08"]?.data?.stakeholders||[]).map(s=>s.name);
-    if (fieldKey === "benefits") return (sheets["07"]?.data?.deliverables||[]).map(d=>d.name);
+    if (fieldKey === "benefits") {
+      // C1 fix: read from charter.benefits
+      return (sheets["01"]?.data?.charter?.benefits||[]).map(b=>b.name);
+    }
+    if (fieldKey === "sustainFocus") {
+      // C3 fix: flatten dimension arrays into a single list
+      const selected = sheets["10"]?.data?.selected || {};
+      return Object.values(selected).flatMap(arr => Array.isArray(arr) ? arr : []);
+    }
     return [];
   };
   const getTeamRoles = () => (sheets["02"]?.data?.teamMembers||[]).filter(m=>!m.isPM).map(m=>m.role);
@@ -976,15 +1081,19 @@ Return ONLY JSON: {"suggestions":["item1","item2","item3","item4","item5"]}`;
 
   const [purposeSuggestion, setPurposeSuggestion] = useState("");
   const [purposeLoading, setPurposeLoading] = useState(false);
+  const purposePopulated = useRef(false);
   useEffect(() => {
     if (currentCluster?.id !== "c2") return;
-    if (getCharterField("purpose")) return;
+    // Use ref to avoid stale closure on sheets — set once when purpose is detected as filled
+    const currentPurpose = sheets["01"]?.data?.charter?.purpose;
+    if (currentPurpose) { purposePopulated.current = true; return; }
+    if (purposePopulated.current) return;
     setPurposeLoading(true);
     const ctx = buildContext();
     callExtract([{role:"user",content:
       `Project name: "${ctx.projectName||"Unnamed project"}". Suggest a concise, specific one-sentence purpose statement (what it will achieve, with a measurable outcome if possible). Return ONLY the sentence, no quotes, no preamble.`
     }], 150).then(text => setPurposeSuggestion(text.trim())).catch(()=>setPurposeSuggestion("")).finally(()=>setPurposeLoading(false));
-  }, [currentCluster?.id]);
+  }, [currentCluster?.id, sheets]);
 
   const navigateToSheet = (id) => {
     if (id === activeSheet) return;
@@ -1090,7 +1199,7 @@ Return ONLY JSON: {"suggestions":["item1","item2","item3","item4","item5"]}`;
                   {docAnalysis && (
                     <div style={{ marginTop:8, fontSize:10, color:C.dim, fontStyle:"italic", lineHeight:1.5,
                       background:C.surface2, borderRadius:6, padding:"8px 10px" }}>
-                      {docAnalysis}
+                      {docAnalysis.replace(/\*\*(.*?)\*\*/g,"$1").replace(/^#{1,3}\s+/gm,"").replace(/\*/g,"").trim()}
                     </div>
                   )}
                 </div>

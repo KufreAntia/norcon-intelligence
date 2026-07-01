@@ -12,22 +12,22 @@ const SESSION_KEY    = "norcon_session_v1";
 const LAST_LOGIN_KEY = "norcon_last_login";
 
 export default function App() {
-  const [screen,    setScreen]    = useState("landing");
-  const [state,     setState]     = useState(INITIAL_STATE);
-  const [member,    setMember]    = useState(null);
-  const [restoring, setRestoring] = useState(true);
-  const [lastLogin, setLastLogin] = useState(null); // { projectCode, memberCode, memberName, lastUsed }
+  const [screen,     setScreen]     = useState("landing");
+  const [state,      setState]      = useState(INITIAL_STATE);
+  const [member,     setMember]     = useState(null);
+  const [restoring,  setRestoring]  = useState(true);
+  const [lastLogin,  setLastLogin]  = useState(null); // { projectCode, memberCode, memberName, lastUsed }
+  const [saveStatus, setSaveStatus] = useState(null); // null | "saved" | "error"
   const { saveState, authenticate } = useProjectPersistence();
-  const saveTimer = useRef(null);
+  const saveTimer      = useRef(null);
+  const saveStatusTimer = useRef(null);
 
   // ── Restore session + read last login ─────────────────────────────────────
   useEffect(() => {
-    // Last login — persists across sessions via localStorage
     try {
       const raw = localStorage.getItem(LAST_LOGIN_KEY);
       if (raw) setLastLogin(JSON.parse(raw));
     } catch(e) { /* ignore */ }
-    // Active session — sessionStorage (cleared on tab close)
     try {
       const raw = sessionStorage.getItem(SESSION_KEY);
       if (raw) {
@@ -42,7 +42,7 @@ export default function App() {
     setRestoring(false);
   }, []);
 
-  // ── Persist session ────────────────────────────────────────────────────────
+  // ── Persist session to sessionStorage ────────────────────────────────────
   useEffect(() => {
     if (screen !== "app") return;
     try {
@@ -50,12 +50,22 @@ export default function App() {
     } catch(e) { /* ignore */ }
   }, [state, member, screen]);
 
-  // ── Auto-save to Redis ─────────────────────────────────────────────────────
+  // ── Auto-save to Redis (debounced 2s) with status feedback ────────────────
   useEffect(() => {
     const code = state.project?.code;
     if (!code || screen !== "app") return;
     if (saveTimer.current) clearTimeout(saveTimer.current);
-    saveTimer.current = setTimeout(() => { saveState(code, state); }, 2000);
+    saveTimer.current = setTimeout(async () => {
+      try {
+        await saveState(code, state);
+        setSaveStatus("saved");
+      } catch(e) {
+        setSaveStatus("error");
+      }
+      // Clear badge after 3 seconds
+      if (saveStatusTimer.current) clearTimeout(saveStatusTimer.current);
+      saveStatusTimer.current = setTimeout(() => setSaveStatus(null), 3000);
+    }, 2000);
   }, [state, screen, saveState]);
 
   // ── Auth ───────────────────────────────────────────────────────────────────
@@ -70,7 +80,6 @@ export default function App() {
     setState({ ...result.state, activeLayer:"L3" });
     setMember(result.member);
     setScreen("app");
-    // Remember for next visit
     try {
       const entry = {
         projectCode,
@@ -85,59 +94,48 @@ export default function App() {
 
   // ── Sheet handlers (passed into ProjectSetup) ──────────────────────────────
   const handleSheetUpdate = useCallback((sheetId, data, status, tierOverride) => {
-    // Special key "__tier__" — writes chosen tier into state (null resets to tier selection)
+
+    // ── Special keys ─────────────────────────────────────────────────────────
+
     if (sheetId === "__tier__") {
-      setState(prev => ({ ...prev, projectTier: tierOverride ?? null, activeLayer:"setup" }));
+      setState(prev => ({ ...prev, projectTier: tierOverride ?? null }));
       return;
     }
-    // Special key "__projectMeta__" — writes project name and code into state.project
+
     if (sheetId === "__projectMeta__") {
       const { projectName, projectCode } = tierOverride;
       setState(prev => ({
         ...prev,
-        project: {
-          ...prev.project,
-          name: projectName,
-          code: projectCode,
-        },
+        project: { ...prev.project, name: projectName, code: projectCode },
       }));
-      // Remember last project code for login pre-fill
       try {
-        const existing = JSON.parse(localStorage.getItem("norcon_last_login") || "{}");
-        localStorage.setItem("norcon_last_login", JSON.stringify({
-          ...existing,
-          projectCode,
-          lastUsed: new Date().toISOString(),
+        const existing = JSON.parse(localStorage.getItem(LAST_LOGIN_KEY) || "{}");
+        localStorage.setItem(LAST_LOGIN_KEY, JSON.stringify({
+          ...existing, projectCode, lastUsed: new Date().toISOString(),
         }));
       } catch(e) { /* ignore */ }
       return;
     }
-    // Special key "__loginCode__" — appends a login code to l2.loginCodes, no duplicates
+
     if (sheetId === "__loginCode__") {
-      const loginEntry = tierOverride;
+      const entry = tierOverride;
       setState(prev => {
         const existing = prev.l2.loginCodes || [];
-        if (existing.some(m => m.loginCode === loginEntry.loginCode)) return prev;
-        return {
-          ...prev,
-          l2: { ...prev.l2, loginCodes: [...existing, loginEntry] },
-        };
+        if (existing.some(m => m.loginCode === entry.loginCode)) return prev;
+        return { ...prev, l2: { ...prev.l2, loginCodes: [...existing, entry] } };
       });
       try {
-        if (loginEntry.isPM) {
+        if (entry.isPM) {
           const existing = JSON.parse(localStorage.getItem(LAST_LOGIN_KEY) || "{}");
           localStorage.setItem(LAST_LOGIN_KEY, JSON.stringify({
-            ...existing,
-            memberCode: loginEntry.loginCode,
-            memberName: loginEntry.name,
-            lastUsed:   new Date().toISOString(),
+            ...existing, memberCode: entry.loginCode, memberName: entry.name,
+            lastUsed: new Date().toISOString(),
           }));
         }
       } catch(e) { /* ignore */ }
       return;
     }
-    // Special key "__removeLoginCode__" — removes a login code when a wizard role is deselected.
-    // tierOverride carries the loginCode string directly for this key.
+
     if (sheetId === "__removeLoginCode__") {
       const codeToRemove = tierOverride;
       setState(prev => ({
@@ -146,20 +144,66 @@ export default function App() {
       }));
       return;
     }
-    setState(prev => ({
-      ...prev,
-      l2: {
-        ...prev.l2,
-        sheets: {
-          ...prev.l2.sheets,
-          [sheetId]: {
-            ...prev.l2.sheets[sheetId],
-            data: { ...prev.l2.sheets[sheetId]?.data, ...data },
-            status: status || prev.l2.sheets[sheetId]?.status || "in-progress",
+
+    if (sheetId === "__updateLoginCodeName__") {
+      const { loginCode, name } = tierOverride;
+      setState(prev => ({
+        ...prev,
+        l2: {
+          ...prev.l2,
+          loginCodes: (prev.l2.loginCodes||[]).map(m =>
+            m.loginCode === loginCode ? { ...m, name } : m
+          ),
+        },
+      }));
+      return;
+    }
+
+    // ── Normal sheet update ───────────────────────────────────────────────────
+    setState(prev => {
+      const prevSheet = prev.l2.sheets[sheetId] || { data:{}, locked:false, status:"empty" };
+      const nextData  = { ...prevSheet.data, ...data };
+      let nextCodes   = prev.l2.loginCodes || [];
+
+      // ── Team sync (H1 fix) ────────────────────────────────────────────────
+      // When Sheet02 writes teamMembers, automatically upsert every member that
+      // has both a name and loginCode into l2.loginCodes so all downstream
+      // consumers (RACI, Risks, Change Control, L3 auth) see the full roster.
+      if (sheetId === "02" && Array.isArray(data.teamMembers)) {
+        data.teamMembers.forEach(member => {
+          if (!member.loginCode || !member.name) return; // skip unnamed/codeless rows
+          const existingIdx = nextCodes.findIndex(lc => lc.loginCode === member.loginCode);
+          const entry = {
+            loginCode:    member.loginCode,
+            name:         member.name,
+            role:         member.role || "",
+            deliveryRole: member.deliveryRole || "",
+            isPM:         member.isPM || member.role === "Project Manager",
+          };
+          if (existingIdx === -1) {
+            nextCodes = [...nextCodes, entry];
+          } else {
+            nextCodes = nextCodes.map((lc, i) => i === existingIdx ? { ...lc, ...entry } : lc);
+          }
+        });
+      }
+
+      return {
+        ...prev,
+        l2: {
+          ...prev.l2,
+          loginCodes: nextCodes,
+          sheets: {
+            ...prev.l2.sheets,
+            [sheetId]: {
+              ...prevSheet,
+              data:   nextData,
+              status: status || prevSheet.status || "in-progress",
+            },
           },
         },
-      },
-    }));
+      };
+    });
   }, []);
 
   const handleSheetApprove = useCallback((sheetId) => {
@@ -192,7 +236,7 @@ export default function App() {
         const items = sheetData[key] || [];
         const idx   = items.findIndex(a => a._id === taskId || a.taskId === taskId);
         if (idx === -1) return null;
-        return items.map((a,i) => i===idx ? {...a, _complete:complete} : a);
+        return items.map((a,i) => i===idx ? {...a, _complete:complete, _state: complete ? "complete" : "pending"} : a);
       };
       const updatedActivities = tryUpdate("activities");
       const updatedMilestones = tryUpdate("milestones");
@@ -229,7 +273,7 @@ export default function App() {
       return {
         ...prev,
         project: { ...prev.project, status:"active" },
-        baseline: { version:1, confirmedDate:today, confirmedBy:loginCode, snapshot },
+        baseline:    { version:1, confirmedDate:today, confirmedBy:loginCode, snapshot },
         currentPlan: { version:1, lastUpdated:today, lastCCR:null, snapshot },
       };
     });
@@ -298,10 +342,9 @@ export default function App() {
           onApplyCCRToPlan={handleApplyCCRToPlan}/>
       )}
 
-      {/* ── Project Setup (L1+L2 merged) ── */}
+      {/* ── Project Setup ── */}
       {state.activeLayer !== "L3" && (
         <>
-          {/* Top bar — only shown during setup */}
           <div style={{ background:C.surface, borderBottom:`1px solid ${C.border}`, padding:"0 20px",
             display:"flex", alignItems:"center", gap:12, height:48, flexShrink:0 }}>
             <div style={{ width:28, height:28, background:C.accent, borderRadius:6,
@@ -317,13 +360,13 @@ export default function App() {
               </>
             )}
             <div style={{ marginLeft:"auto", display:"flex", gap:8, alignItems:"center" }}>
-              {/* Back — navigate to previous page within the app */}
-              <button onClick={() => window.history.back()}
-                style={{ padding:"5px 10px", fontSize:11, borderRadius:5,
-                  border:`1px solid ${C.border}`, background:"none", color:C.muted, cursor:"pointer" }}>
-                ← Back
-              </button>
-              {/* Show L3 button once enough sheets are saved */}
+              {/* Save status badge */}
+              {saveStatus === "saved" && (
+                <span style={{ fontSize:10, color:"#3ae0a2" }}>✓ Saved</span>
+              )}
+              {saveStatus === "error" && (
+                <span style={{ fontSize:10, color:C.risk }}>⚠ Save failed — check connection</span>
+              )}
               {l3Unlocked && (
                 <button onClick={handleGoToL3}
                   style={{ padding:"5px 12px", fontSize:11, fontWeight:700, borderRadius:5,
@@ -340,7 +383,6 @@ export default function App() {
             </div>
           </div>
 
-          {/* ProjectSetup — fills remaining height */}
           <div style={{ flex:1, overflow:"hidden", display:"flex", flexDirection:"column" }}>
             <ProjectSetup
               state={state}

@@ -4,11 +4,11 @@ const C = { surface:"#122E1E", surface2:"#183D28", border:"#1F4D34", accent:"#2E
 const RACI_COLORS = { R:C.risk, A:C.milestone, C:"#3a9ce0", I:"#9c6ee0" };
 const RACI_OPTS   = ["","R","A","C","I"];
 
-// Auto-suggest RACI based on governance tier and role
 function suggestRaci(role, taskType) {
   const lower = (role||"").toLowerCase();
   if (lower.includes("project manager"))             return "A";
   if (lower.includes("assistant project manager"))   return "C";
+  if (lower.includes("sponsor"))                     return "I";
   if (lower.includes("risk") && taskType==="risk")   return "R";
   if (lower.includes("comms") || lower.includes("communications")) return "R";
   if (lower.includes("scheduler"))                   return "R";
@@ -49,7 +49,6 @@ export default function Sheet04RACI({ data, locked, loginCodes, allSheets, onUpd
   const milestones   = scheduleData.milestones || [];
   const members      = loginCodes.filter(lc => lc.name && lc.role);
 
-  // Build auto-populated matrix from schedule + team
   const buildAutoMatrix = () => {
     const allTasks = [
       ...activities.map(a => ({ id:a._id, label:a.name||a._id, phase:a.phase, type:"activity",  suggestedResponsible:a.responsible })),
@@ -58,7 +57,6 @@ export default function Sheet04RACI({ data, locked, loginCodes, allSheets, onUpd
     return allTasks.map(task => {
       const assignments = {};
       members.forEach(m => {
-        // PM is always A on milestones, R on their own activities
         if (m.role === "Project Manager") {
           assignments[m.loginCode] = task.type === "milestone" ? "A" : "C";
         } else if (task.suggestedResponsible && (m.role === task.suggestedResponsible || m.deliveryRole === task.suggestedResponsible)) {
@@ -71,29 +69,28 @@ export default function Sheet04RACI({ data, locked, loginCodes, allSheets, onUpd
     });
   };
 
-  // Always prefer saved raciRows, but if empty try to build from schedule
   const initMatrix = () => {
     if (data.raciRows?.length > 0) return data.raciRows;
-    const built = buildAutoMatrix();
-    return built;
+    return buildAutoMatrix();
   };
 
   const [matrix,     setMatrix]     = useState(initMatrix);
   const [customRows, setCustomRows] = useState(data.customRows || []);
 
   const save = (mat, cust) => {
-    onUpdate({ raciRows:mat, customRows:cust }, 'in-progress');
+    onUpdate({ raciRows:mat, customRows:cust }, "in-progress");
   };
 
-  // Auto-sync once when schedule data arrives but matrix is still empty
-  const scheduleKey = activities.length + "_" + milestones.length + "_" + members.length;
+  // Auto-sync when schedule data or team arrives but matrix is still empty.
+  // Key now includes member names so header cells re-render when names change (M5 fix).
+  const scheduleKey = `${activities.length}_${milestones.length}_${members.map(m=>m.name).join(",")}`;
+
   useEffect(() => {
-    if (matrix.length === 0) {
-      const built = buildAutoMatrix();
-      if (built.length > 0) {
-        setMatrix(built);
-        save(built, customRows);
-      }
+    const built = buildAutoMatrix();
+    // Only auto-fill when there is schedule data to build from AND matrix is empty (L4 fix)
+    if (built.length > 0 && matrix.length === 0) {
+      setMatrix(built);
+      save(built, customRows);
     }
   }, [scheduleKey]);
 
@@ -127,10 +124,10 @@ export default function Sheet04RACI({ data, locked, loginCodes, allSheets, onUpd
   const removeRow = (rowIdx) => {
     const isCustom = rowIdx >= matrix.length;
     if (isCustom) {
-      const next = customRows.filter((_,i)=>i!==(rowIdx-matrix.length));
+      const next = customRows.filter((_,i) => i !== (rowIdx-matrix.length));
       setCustomRows(next); save(matrix, next);
     } else {
-      const next = matrix.filter((_,i)=>i!==rowIdx);
+      const next = matrix.filter((_,i) => i !== rowIdx);
       setMatrix(next); save(next, customRows);
     }
   };
@@ -145,9 +142,8 @@ export default function Sheet04RACI({ data, locked, loginCodes, allSheets, onUpd
 
   return (
     <div style={{maxWidth:"100%"}}>
-      {/* Legend + controls */}
       <div style={{display:"flex",alignItems:"center",gap:16,marginBottom:14,flexWrap:"wrap"}}>
-        {[["R","Responsible"],["A","Accountable"],["C","Consulted"],["I","Informed"]].map(([k,v])=>(
+        {[["R","Responsible"],["A","Accountable"],["C","Consulted"],["I","Informed"]].map(([k,v]) => (
           <div key={k} style={{display:"flex",alignItems:"center",gap:5,fontSize:11,color:C.dim}}>
             <div style={{width:22,height:22,borderRadius:4,background:RACI_COLORS[k]+"22",border:`1px solid ${RACI_COLORS[k]}`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,fontWeight:700,color:RACI_COLORS[k]}}>{k}</div>
             {v}
@@ -162,16 +158,15 @@ export default function Sheet04RACI({ data, locked, loginCodes, allSheets, onUpd
 
       {members.length === 0 && (
         <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:7,padding:"12px 16px",marginBottom:12,fontSize:12,color:C.muted}}>
-          ⚠️ Complete Sheet 02 (Team) to populate team member columns.
+          ⚠️ Complete the Team sheet to populate team member columns.
         </div>
       )}
       {allRows.length === 0 && (
         <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:7,padding:"12px 16px",marginBottom:12,fontSize:12,color:C.muted}}>
-          ⚠️ Complete Sheet 03 (Schedule) to auto-populate activity rows, or add rows manually below.
+          ⚠️ Complete the Schedule sheet to auto-populate activity rows, or add rows manually below.
         </div>
       )}
 
-      {/* Table */}
       <div style={{overflowX:"auto"}}>
         <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
           <thead>
@@ -179,7 +174,7 @@ export default function Sheet04RACI({ data, locked, loginCodes, allSheets, onUpd
               <th style={{padding:"7px 10px",textAlign:"left",fontWeight:700,fontSize:9,color:C.muted,textTransform:"uppercase",letterSpacing:".4px",borderBottom:`1px solid ${C.border}`,minWidth:70}}>ID</th>
               <th style={{padding:"7px 10px",textAlign:"left",fontWeight:700,fontSize:9,color:C.muted,textTransform:"uppercase",letterSpacing:".4px",borderBottom:`1px solid ${C.border}`,minWidth:180}}>Task / Activity</th>
               <th style={{padding:"7px 10px",textAlign:"left",fontWeight:700,fontSize:9,color:C.muted,textTransform:"uppercase",letterSpacing:".4px",borderBottom:`1px solid ${C.border}`,minWidth:80}}>Phase</th>
-              {members.map(m=>(
+              {members.map(m => (
                 <th key={m.loginCode} style={{padding:"7px 8px",textAlign:"center",fontWeight:700,fontSize:9,color:C.muted,textTransform:"uppercase",letterSpacing:".3px",borderBottom:`1px solid ${C.border}`,minWidth:68}}>
                   <div style={{color:C.accentL,fontFamily:"monospace",fontSize:9,marginBottom:2}}>{m.loginCode}</div>
                   <div style={{fontSize:9,color:C.dim,fontWeight:400,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",maxWidth:64}}>{(m.name||"").split(" ")[0]}</div>
@@ -190,7 +185,7 @@ export default function Sheet04RACI({ data, locked, loginCodes, allSheets, onUpd
             </tr>
           </thead>
           <tbody>
-            {allRows.map((row,rowIdx)=>(
+            {allRows.map((row,rowIdx) => (
               <tr key={row.taskId||rowIdx} style={{borderBottom:`1px solid ${C.border}`,background:rowIdx%2===0?C.surface:"transparent"}}>
                 <td style={{padding:"5px 10px"}}>
                   <input value={row.taskId||""} disabled={locked}
@@ -209,7 +204,7 @@ export default function Sheet04RACI({ data, locked, loginCodes, allSheets, onUpd
                     style={{background:"transparent",border:"none",color:C.dim,fontSize:11,outline:"none",width:90,fontFamily:"inherit"}}
                     placeholder="Phase..."/>
                 </td>
-                {members.map(m=>(
+                {members.map(m => (
                   <td key={m.loginCode} style={{padding:"4px 6px",textAlign:"center"}}>
                     <EditableCell value={row.assignments?.[m.loginCode]||""} disabled={locked} onChange={v=>setCell(rowIdx,m.loginCode,v)}/>
                   </td>

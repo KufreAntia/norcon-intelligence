@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 
 const C = {
   bg:"#0D2B1B", surface:"#122E1E", surface2:"#183D28", border:"#1F4D34",
@@ -14,12 +14,19 @@ const inp = {
   textTransform:"uppercase", letterSpacing:".1em",
 };
 
-export default function LandingScreen({ onCreateNew, onLogin }) {
+export default function LandingScreen({ onCreateNew, onLogin, lastLogin }) {
   const [mode,        setMode]        = useState(null); // null | 'login'
   const [projectCode, setProjectCode] = useState('');
   const [memberCode,  setMemberCode]  = useState('');
   const [loading,     setLoading]     = useState(false);
   const [error,       setError]       = useState('');
+
+  // Pre-fill fields from last login
+  useEffect(() => {
+    if (!lastLogin) return;
+    if (lastLogin.projectCode) setProjectCode(lastLogin.projectCode.toUpperCase());
+    if (lastLogin.memberCode)  setMemberCode(lastLogin.memberCode.toUpperCase());
+  }, [lastLogin]);
 
   const handleLogin = async () => {
     if (!projectCode.trim() || !memberCode.trim()) {
@@ -34,6 +41,12 @@ export default function LandingScreen({ onCreateNew, onLogin }) {
       setError(err.message);
       setLoading(false);
     }
+  };
+
+  const clearLastLogin = () => {
+    setProjectCode('');
+    setMemberCode('');
+    try { localStorage.removeItem("norcon_last_login"); } catch(e) { /* ignore */ }
   };
 
   return (
@@ -66,7 +79,6 @@ export default function LandingScreen({ onCreateNew, onLogin }) {
       }}>
 
         {mode === null && (
-          /* Choice screen */
           <div style={{ padding:28 }}>
             <div style={{ fontSize:15, fontWeight:700, color:C.sage, marginBottom:6, textAlign:"center" }}>
               Welcome
@@ -75,7 +87,6 @@ export default function LandingScreen({ onCreateNew, onLogin }) {
               What would you like to do?
             </div>
 
-            {/* Create new */}
             <div onClick={onCreateNew} style={{
               border:`1px solid ${C.accent}`, borderRadius:8, padding:"16px 20px",
               marginBottom:12, cursor:"pointer", transition:"all .2s",
@@ -99,7 +110,6 @@ export default function LandingScreen({ onCreateNew, onLogin }) {
               </div>
             </div>
 
-            {/* Login to existing */}
             <div onClick={()=>setMode('login')} style={{
               border:`1px solid ${C.border}`, borderRadius:8, padding:"16px 20px",
               cursor:"pointer", transition:"all .2s",
@@ -126,9 +136,7 @@ export default function LandingScreen({ onCreateNew, onLogin }) {
         )}
 
         {mode === 'login' && (
-          /* Login form */
           <div>
-            {/* Header */}
             <div style={{
               background:C.surface2, borderBottom:`1px solid ${C.border}`,
               padding:"14px 20px", display:"flex", alignItems:"center", gap:10,
@@ -137,10 +145,28 @@ export default function LandingScreen({ onCreateNew, onLogin }) {
                 background:"none", border:"none", color:C.muted, cursor:"pointer",
                 fontSize:18, padding:0, lineHeight:1,
               }}>←</button>
-              <div style={{ fontSize:14, fontWeight:700, color:C.sage }}>
-                Login to project
-              </div>
+              <div style={{ fontSize:14, fontWeight:700, color:C.sage }}>Login to project</div>
             </div>
+
+            {/* Welcome back banner */}
+            {lastLogin?.memberName && (
+              <div style={{ background:C.accent+"11", borderBottom:`1px solid ${C.accent}33`,
+                padding:"10px 20px", display:"flex", alignItems:"center", justifyContent:"space-between" }}>
+                <div>
+                  <div style={{ fontSize:12, fontWeight:700, color:C.accentL }}>
+                    Welcome back, {lastLogin.memberName}
+                  </div>
+                  <div style={{ fontSize:10, color:C.muted, marginTop:1 }}>
+                    Fields pre-filled from your last session
+                  </div>
+                </div>
+                <button onClick={clearLastLogin}
+                  style={{ fontSize:10, color:C.muted, background:"none", border:"none",
+                    cursor:"pointer", textDecoration:"underline" }}>
+                  Not you?
+                </button>
+              </div>
+            )}
 
             <div style={{ padding:24, display:"flex", flexDirection:"column", gap:16 }}>
               <div>
@@ -203,7 +229,6 @@ export default function LandingScreen({ onCreateNew, onLogin }) {
         )}
       </div>
 
-      {/* Footer */}
       <div style={{ marginTop:32, fontSize:12, color:C.muted, textAlign:"center" }}>
         Powered by NorCon Projects · APM-aligned project management
       </div>
