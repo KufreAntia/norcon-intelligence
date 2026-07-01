@@ -804,7 +804,9 @@ Produce a project document covering ALL sections below. Go beyond this list wher
 1. PROJECT OVERVIEW — name, code, PM, sponsor, organisation, dates, budget
 2. PURPOSE, PROBLEM & STRATEGIC ALIGNMENT
 3. SCOPE — within scope (numbered list); out of scope (numbered list)
-4. PROJECT TEAM — all members with names, roles, governance tiers
+4. PROJECT TEAM — ${isSparse
+  ? "List the ROLES needed for this project only — do NOT invent or generate names. Names will be assigned by the PM. Format each as: Role Title (Governance Tier). Example: Project Manager (Tier 3), Event Coordinator (Tier 4)."
+  : "All members with full names, roles, and governance tiers — extract exactly as found in the documents."}
 5. PROJECT SCHEDULE — all phases; every activity (name, phase, responsible role, start date, target date, description); every milestone (name, phase, target date). ${isSparse ? "Generate a realistic full schedule." : "Extract ALL activities found — never truncate."}
 6. RISK REGISTER — every risk (name, cause, potential impact, likelihood 1–3, impact 1–3, mitigation, response, category). ${isSparse ? "Generate 6–10 realistic risks." : "Extract all risks."}
 7. STAKEHOLDER REGISTER — every stakeholder (name, role, power 1–10, interest 1–10, influence 1–10, ease 1–10, engagement strategy)
@@ -887,14 +889,24 @@ Return ONLY JSON, no markdown, no preamble:
     if (extracted.team?.length) {
       const existingCodes = [...(l2?.loginCodes||[]).map(m=>m.loginCode), ...existingTeam.map(m=>m.loginCode).filter(Boolean)];
       const newM = extracted.team.filter(m => {
-        if (!m.name) return false;
+        // Accept entries that have at least a role (name may be blank for generated/role-only entries)
+        if (!m.role && !m.name) return false;
+        // Never duplicate a singleton governance role
         if (SINGLE_ROLES.includes(m.role) && existingTeam.some(e => e.role === m.role)) return false;
-        return !existingTeam.some(e => e.name?.toLowerCase() === m.name.toLowerCase());
+        // Deduplicate by name only when a name is present
+        if (m.name && existingTeam.some(e => e.name?.toLowerCase() === m.name.toLowerCase())) return false;
+        // Deduplicate by role for role-only entries
+        if (!m.name && existingTeam.some(e => e.role === m.role)) return false;
+        return true;
       }).map((m,i) => {
         const code = generateLoginCode(project?.code || "NC", existingCodes);
         existingCodes.push(code);
-        return { _id:`TM-${String(existingTeam.length+i+1).padStart(3,"0")}`, name:m.name, role:m.role||"",
-          deliveryRole:"", availability:"", loginCode:code, location:"", responsibilities:"" };
+        return {
+          _id:`TM-${String(existingTeam.length+i+1).padStart(3,"0")}`,
+          name: m.name || "",   // blank for generated/role-only — PM fills in later
+          role: m.role || "",
+          deliveryRole:"", availability:"", loginCode:code, location:"", responsibilities:"",
+        };
       });
       if (newM.length) onSheetUpdate("02", { teamMembers:[...existingTeam,...newM] }, "ai-draft");
     }
