@@ -45,9 +45,10 @@ const SHEET_LABELS = {
 };
 
 const WIZARD_SHEETS = {
-  light: ["02","01","04","05","10"],
-  full:  ["02","01","04","08","07","06","05","10"],
+  light: ["02","01","05","10"],
+  full:  ["02","01","08","07","05","10"],
 };
+// Schedule ("03") always appended last — needs maximum accumulated context
 const scheduleLast = (arr) => [...arr, "03"];
 
 const CLUSTERS = {
@@ -712,32 +713,39 @@ Return ONLY JSON, no markdown:
     const extracted = safeParseJSON(raw);
 
     // ── Charter (C2: now includes strategicAlignment, withinScope, outOfScope) ──
-    if (extracted.charter) {
+    // ── Charter + benefits — single atomic write to avoid race condition ──────
+    // Reading stale `sheets` twice and calling onSheetUpdate("01") twice would
+    // cause the second write to overwrite the first (both read the same pre-write
+    // snapshot). Merge all charter-level changes into one call.
+    if (extracted.charter || extracted.benefits?.length) {
       const c = sheets["01"]?.data?.charter || {};
-      const updates = {};
-      Object.entries(extracted.charter).forEach(([k,v]) => {
-        if (!v || c[k]) return; // PM edits always win
-        if (Array.isArray(v) && v.length === 0) return; // skip empty arrays
-        updates[k] = v;
-      });
-      if (Object.keys(updates).length) onSheetUpdate("01", { charter:{...c,...updates} }, "ai-draft");
-    }
+      const mergedCharter = { ...c };
 
-    // ── C1 fix: benefits write to charter.benefits, not KD Tracker deliverables ──
-    if (extracted.benefits?.length) {
-      const c = sheets["01"]?.data?.charter || {};
-      const existingBens = c.benefits || [];
-      const newBens = extracted.benefits.filter(b=>b.name && !existingBens.some(e=>e.name?.toLowerCase()===b.name.toLowerCase()))
-        .map((b,i)=>({
-          _id:`BEN-${String(existingBens.length+i+1).padStart(3,"0")}`,
-          name:b.name, description:b.description||"", category:b.category||"Strategic",
-          owner:b.owner||"", targetDate:b.targetDate||"",
-          sustainmentPlan:"", lessonsLearned:"", objectives:[],
-        }));
-      if (newBens.length) {
-        const current = sheets["01"]?.data?.charter || {};
-        onSheetUpdate("01", { charter:{...current, benefits:[...existingBens,...newBens]} }, "ai-draft");
+      // Charter fields
+      if (extracted.charter) {
+        Object.entries(extracted.charter).forEach(([k,v]) => {
+          if (!v || c[k]) return;
+          if (Array.isArray(v) && v.length === 0) return;
+          mergedCharter[k] = v;
+        });
       }
+
+      // Benefits (C1 fix: write to charter.benefits, not KD Tracker deliverables)
+      if (extracted.benefits?.length) {
+        const existingBens = c.benefits || [];
+        const newBens = extracted.benefits
+          .filter(b => b.name && !existingBens.some(e => e.name?.toLowerCase() === b.name.toLowerCase()))
+          .map((b,i) => ({
+            _id:`BEN-${String(existingBens.length+i+1).padStart(3,"0")}`,
+            name:b.name, description:b.description||"", category:b.category||"Strategic",
+            owner:b.owner||"", targetDate:b.targetDate||"",
+            sustainmentPlan:"", lessonsLearned:"", objectives:[],
+          }));
+        if (newBens.length) mergedCharter.benefits = [...existingBens, ...newBens];
+      }
+
+      const hasChanges = JSON.stringify(mergedCharter) !== JSON.stringify(c);
+      if (hasChanges) onSheetUpdate("01", { charter: mergedCharter }, "ai-draft");
     }
 
     const existingTeam = sheets["02"]?.data?.teamMembers || [];
@@ -819,7 +827,90 @@ Return ONLY JSON, no markdown:
         if (newSH.length) onSheetUpdate("08", { stakeholders:[...existingSH,...newSH] }, "ai-draft");
       }
     }
+
+    // ── Generation pass — fill any gaps that extraction missed ────────────────
+    // If the document was sparse or poorly structured, generate reasonable content
+    // using the project context we've accumulated.
+    await generateMissingContent(source);
+
     setAiStatus("");
+  };
+
+  // Generate activities, risks, and missing charter fields when extraction leaves gaps.
+  // This runs AFTER extraction so we never overwrite extracted data.
+  const generateMissingContent = async (source) => {
+    const c = sheets["01"]?.data?.charter || {};
+    const projectName   = c.projectName   || "";
+    const purpose       = c.purpose       || "";
+    const organisation  = c.organisation  || "";
+    const existingActs  = sheets["03"]?.data?.activities || [];
+    const existingRisks = sheets["05"]?.data?.risks || [];
+
+    // Only generate if we have at minimum a project name or purpose to work from
+    if (!projectName && !purpose) return;
+
+    const contextStr = [
+      projectName  ? `Project: ${projectName}`    : "",
+      organisation ? `Organisation: ${organisation}` : "",
+      purpose      ? `Purpose: ${purpose}`           : "",
+      c.problemStatement ? `Problem: ${c.problemStatement}` : "",
+    ].filter(Boolean).join("\n");
+
+    // Generate activities if extraction found none
+    if (existingActs.length === 0) {
+      setAiStatus("Generating project schedule…");
+      try {
+        const prompt = `You are an expert PM. Based on this project context, generate a realistic project schedule of 6-10 activities across APM lifecycle phases (Concept, Definition, Development, Handover & Closeout).
+
+${contextStr}
+
+Return ONLY JSON, no markdown:
+{"activities":[{"name":"","phase":"","responsible":"","description":""}]}
+
+Rules:
+- Use ONLY these phases: Concept, Definition, Development, Handover & Closeout
+- Leave responsible blank
+- Make activity names specific to this project — not generic "Phase 1" labels
+- Aim for 6-10 activities`;
+        const raw = await callExtract([{role:"user",content:prompt}], 2000);
+        const parsed = safeParseJSON(raw);
+        if (parsed.activities?.length) {
+          const newA = parsed.activities.filter(a => a.name).map((a,i) => ({
+            _id:`ACT-${String(i+1).padStart(3,"0")}`,
+            name:a.name, phase:a.phase||"Definition", responsible:"",
+            description:a.description||"", _complete:false, _state:"pending",
+          }));
+          if (newA.length) onSheetUpdate("03", { activities:newA, milestones: sheets["03"]?.data?.milestones||[] }, "ai-draft");
+        }
+      } catch(e) { /* non-fatal */ }
+    }
+
+    // Generate risks if extraction found none
+    if (existingRisks.length === 0) {
+      setAiStatus("Generating risk register…");
+      try {
+        const prompt = `You are a project risk expert. Based on this project context, identify 4-6 realistic risks.
+
+${contextStr}
+
+Return ONLY JSON, no markdown:
+{"risks":[{"name":"","cause":"","potentialImpact":"","likelihood":"2 - Medium","impact":"2 - Medium","response":"Reduce","mitigation":"","category":""}]}
+
+Use ONLY these likelihood/impact values: "1 - Low", "2 - Medium", "3 - High"
+Categories: Strategic, Operational, Financial, Stakeholder, Technical, External`;
+        const raw = await callExtract([{role:"user",content:prompt}], 1500);
+        const parsed = safeParseJSON(raw);
+        if (parsed.risks?.length) {
+          const newR = parsed.risks.filter(r => r.name).map((r,i) => ({
+            _id:`R-${String(101+i)}`, name:r.name, cause:r.cause||"",
+            potentialImpact:r.potentialImpact||"", likelihood:r.likelihood||"2 - Medium",
+            impact:r.impact||"2 - Medium", response:r.response||"Reduce",
+            mitigation:r.mitigation||"", category:r.category||"",
+          }));
+          if (newR.length) onSheetUpdate("05", { risks:newR }, "ai-draft");
+        }
+      } catch(e) { /* non-fatal */ }
+    }
   };
 
   const handleFileUpload = async (e) => {
@@ -881,8 +972,11 @@ Return ONLY JSON, no markdown:
       setClusterIdx(0);
       return;
     }
+    // Wizard complete — generate missing content before entering Personalisation
     setPhase("done");
     setActiveSheet(tierCfg.sheets[0]);
+    // Run in background — don't block transition to Personalisation
+    generateMissingContent("wizard").catch(()=>{});
   };
 
   const goBackWizard = () => {
@@ -1343,42 +1437,47 @@ Return ONLY JSON: {"suggestions":["item1","item2","item3","item4","item5"]}`;
 
                 if (field.type === "chips-multi") {
                   const items = getChipItems(field.key);
-                  const suggestions = (aiChipSuggestions[currentCluster.id]||[]).filter(s=>!items.includes(s));
+                  // All suggestions shown; clicked ones are highlighted as selected in place
+                  const allSuggestions = aiChipSuggestions[currentCluster.id] || [];
+                  // Merge: suggestions first, then any custom-added items not in suggestions
+                  const customItems = items.filter(it => !allSuggestions.includes(it));
+                  const allChips = [...allSuggestions, ...customItems];
                   return (
                     <div key={field.key} style={{ marginBottom:18 }}>
-                      <div style={{ fontSize:11, fontWeight:700, color:C.dim, textTransform:"uppercase", letterSpacing:".4px", marginBottom:10 }}>{field.label}</div>
-
-                      {items.length > 0 && (
-                        <div style={{ display:"flex", flexWrap:"wrap", gap:6, marginBottom:10 }}>
-                          {items.map(item => (
-                            <span key={item} style={{ padding:"5px 10px", borderRadius:16, fontSize:11,
-                              background:C.accentL+"22", color:C.accentL, border:`1px solid ${C.accentL}44`,
-                              display:"flex", alignItems:"center", gap:6 }}>
-                              {item}
-                              <span onClick={()=>removeChipItem(field.key,item)} style={{ cursor:"pointer", opacity:0.7 }}>✕</span>
-                            </span>
-                          ))}
-                        </div>
-                      )}
+                      <div style={{ fontSize:11, fontWeight:700, color:C.dim, textTransform:"uppercase", letterSpacing:".4px", marginBottom:6 }}>{field.label}</div>
 
                       <div style={{ fontSize:10, fontWeight:700, color:C.accentL, textTransform:"uppercase", letterSpacing:".4px", marginBottom:8, display:"flex", alignItems:"center", gap:6 }}>
                         <span style={{ width:5, height:5, borderRadius:"50%", background:C.accentL, animation: chipsLoading?"pulse 1.2s ease-in-out infinite":"none" }}/>
-                        {chipsLoading ? "Generating suggestions…" : "AI Suggestions"}
+                        {chipsLoading ? "Generating suggestions…" : `AI Suggestions${items.length>0?` — ${items.length} selected`:""}`}
                       </div>
-                      <div style={{ display:"flex", flexWrap:"wrap", gap:6, marginBottom:10 }}>
-                        {suggestions.map(s => (
-                          <button key={s} onClick={()=>addChipItem(field.key,s)}
-                            style={{ padding:"5px 11px", borderRadius:16, fontSize:11, fontWeight:600,
-                              border:`1px solid ${C.accentL}66`, background:C.accentL+"11", color:C.dim, cursor:"pointer" }}>
-                            + {s}
-                          </button>
-                        ))}
-                        {!chipsLoading && suggestions.length===0 && items.length===0 && (
-                          <span style={{ fontSize:10, color:C.muted, fontStyle:"italic" }}>No suggestions yet — add your own below</span>
+
+                      {/* All chips shown together — clicking toggles selected state */}
+                      <div style={{ display:"flex", flexWrap:"wrap", gap:7, marginBottom:12 }}>
+                        {allChips.map(chip => {
+                          const selected = items.includes(chip);
+                          return (
+                            <button key={chip}
+                              onClick={()=> selected ? removeChipItem(field.key, chip) : addChipItem(field.key, chip)}
+                              style={{
+                                padding:"7px 13px", borderRadius:20, fontSize:11, fontWeight:600,
+                                border:`1.5px solid ${selected ? C.accentL : C.accentL+"55"}`,
+                                background: selected ? C.accentL : C.accentL+"11",
+                                color: selected ? "#fff" : C.dim,
+                                cursor:"pointer", transition:"all .15s",
+                                display:"flex", alignItems:"center", gap:5,
+                              }}>
+                              {selected ? "✓ " : "+ "}{chip}
+                            </button>
+                          );
+                        })}
+                        {!chipsLoading && allChips.length===0 && (
+                          <span style={{ fontSize:10, color:C.muted, fontStyle:"italic" }}>Type your own below</span>
                         )}
                       </div>
+
+                      {/* Custom item input with explicit Add button */}
                       <div style={{ display:"flex", gap:6 }}>
-                        <input id={`custom-${field.key}`} placeholder="Type your own and press Enter…"
+                        <input id={`custom-${field.key}`} placeholder="Type your own…"
                           onKeyDown={e=>{
                             if(e.key==="Enter" && e.target.value.trim()){
                               addChipItem(field.key, e.target.value.trim());
@@ -1387,6 +1486,17 @@ Return ONLY JSON: {"suggestions":["item1","item2","item3","item4","item5"]}`;
                             }
                           }}
                           style={{ ...inp, fontSize:11 }}/>
+                        <button onClick={()=>{
+                          const inp_el = document.getElementById(`custom-${field.key}`);
+                          if(inp_el && inp_el.value.trim()){
+                            addChipItem(field.key, inp_el.value.trim());
+                            inp_el.value="";
+                            fetchChipSuggestions(currentCluster.id, field.key);
+                          }
+                        }} style={{ padding:"8px 14px", background:C.accent, border:"none", borderRadius:5,
+                          color:"#fff", fontSize:11, fontWeight:700, cursor:"pointer", flexShrink:0 }}>
+                          Add
+                        </button>
                       </div>
                     </div>
                   );
@@ -1403,7 +1513,9 @@ Return ONLY JSON: {"suggestions":["item1","item2","item3","item4","item5"]}`;
                           <span style={{ color:C.accentL, fontWeight:700 }}>Suggestion: </span>{purposeSuggestion}
                         </div>
                       )}
-                      <textarea defaultValue={current || purposeSuggestion} key={current||purposeSuggestion}
+                      <textarea
+                        value={fieldAnswers["purpose"] !== undefined ? fieldAnswers["purpose"] : (current || purposeSuggestion || "")}
+                        onChange={e=>setFieldAnswers(prev=>({...prev,purpose:e.target.value}))}
                         onBlur={e=>saveFieldAnswer("purpose", e.target.value)}
                         placeholder={purposeLoading ? "Generating suggestion…" : "What will this project achieve?"}
                         style={{ ...inp, minHeight:70, resize:"none", lineHeight:1.5 }}/>
@@ -1417,7 +1529,10 @@ Return ONLY JSON: {"suggestions":["item1","item2","item3","item4","item5"]}`;
                       <div style={{ fontSize:11, fontWeight:700, color:C.dim, textTransform:"uppercase", letterSpacing:".4px", marginBottom:8 }}>
                         {field.label} {field.optional && <span style={{ fontWeight:400, color:C.muted, textTransform:"none" }}>(optional)</span>}
                       </div>
-                      <textarea defaultValue={fieldAnswers[field.key]||""} onBlur={e=>saveFieldAnswer(field.key, e.target.value)}
+                      <textarea
+                        value={fieldAnswers[field.key]||""}
+                        onChange={e=>setFieldAnswers(prev=>({...prev,[field.key]:e.target.value}))}
+                        onBlur={e=>saveFieldAnswer(field.key, e.target.value)}
                         style={{ ...inp, minHeight:60, resize:"none" }}/>
                     </div>
                   );
@@ -1429,17 +1544,15 @@ Return ONLY JSON: {"suggestions":["item1","item2","item3","item4","item5"]}`;
                       {field.label} {field.required && <span style={{ color:C.risk }}>*</span>}
                     </div>
                     <input type={field.type==="date"?"date":"text"}
-                      defaultValue={
-                        field.key==="projectManager"?getCharterField("projectManager"):
-                        field.key==="projectName"?getCharterField("projectName"):
-                        field.key==="organisation"?getCharterField("organisation"):
-                        field.key==="projectSponsor"?getCharterField("projectSponsor"):
-                        field.key==="startDate"?getCharterField("startDate"):
-                        field.key==="endDate"?getCharterField("endDate"):
-                        field.key==="budget"?getCharterField("budget"):
-                        fieldAnswers[field.key]||""
+                      value={
+                        fieldAnswers[field.key] !== undefined ? fieldAnswers[field.key] :
+                        (getCharterField(field.key) || "")
                       }
-                      onBlur={e=>saveFieldAnswer(field.key, e.target.value)}
+                      onChange={e=>{
+                        const v = e.target.value;
+                        setFieldAnswers(prev=>({...prev,[field.key]:v}));
+                        saveFieldAnswer(field.key, v);
+                      }}
                       placeholder={field.placeholder||""}
                       style={inp}/>
                   </div>
@@ -1472,7 +1585,7 @@ Return ONLY JSON: {"suggestions":["item1","item2","item3","item4","item5"]}`;
   const activeSheets = tierCfg.sheets;
   const SheetComp = SHEET_COMPONENTS[activeSheet];
   const approvedCount = Object.values(sheets).filter(s=>s.locked).length;
-  const l3Unlocked = approvedCount > 0 && (l2?.loginCodes||[]).length > 0;
+  const l3Unlocked = (l2?.loginCodes||[]).length > 0;
 
   return (
     <div style={{ display:"flex", flexDirection:"column", flex:1, overflow:"hidden", height:"100%" }}>
